@@ -137,7 +137,7 @@ impl Chip {
             (0b00, 0b011, 0b000) => { self.jr() }, //JR
             (0b00, 0b100..=0b111, 0b000) => { self.jr_cond(oct2) }, //JR conditonal
             (0b00,0b000|0b010|0b100|0b110, 0b001) => { self.ld_xx_rr(oct2) }, //LD r16, u16
-            (0b00,0b001|0b011|0b101|0b111, 0b001) => { self.add_hl_rr(oct22) }, //ADD HL, r16
+            (0b00,0b001|0b011|0b101|0b111, 0b001) => { self.add_hl_rr(oct2) }, //ADD HL, r16
             (0b00,0b000|0b010|0b100|0b110, 0b010) => {  }, //LD (r16), A
             (0b00,0b001|0b011|0b101|0b111, 0b010) => {  }, //LD A, (r16)
             (0b00,0b000|0b010|0b100|0b110, 0b011) => {  }, //INC r16
@@ -184,8 +184,17 @@ impl Chip {
 
     //Add register r16 value to HL
     fn add_hl_rr(&mut self, register: u8) {
-        self.h = self.byte3;
-        self.l = self.byte2;
+        let r16 = match register {
+            0b001 => { (self.b as u16) << 8 | self.c as u16 },
+            0b011 => {  (self.d as u16) << 8 | self.e as u16 },
+            0b101 => {(self.h as u16) << 8 | self.l as u16 },
+            0b111 => { self.sp },
+            _ => { panic!("Unknown condition {}", register) }
+        };
+
+        self.h += (r16 >> 8) as u8;
+        self.l += (r16 & 0x00ff) as u8;
+
         //Additions reset the n flag
         self.flags.n = 0;
         
@@ -250,14 +259,14 @@ impl Chip {
     
     fn ldd_hl_a(&mut self) {
         let mut pc = ((self.h as u16) << 8) as u16 | self.l as u16;
-        self.write_memory(pc as usize, self.a);
+        self.write_memory(pc, self.a);
         pc -= 1;
         self.h = (pc >> 8) as u8;
         self.l = (pc << 8 >> 8) as u8;
     }
 
     fn adc_r(&mut self, r8: u8) {
-        self.a += (self.flags.carry + r8);
+        self.a += self.flags.carry + r8;
     }
     fn xor_r(&mut self, r8: u8) {
         let value = match r8 {
