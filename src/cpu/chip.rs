@@ -93,7 +93,7 @@ impl Chip {
             _ => {  }
         };
     }
-    pub fn read_memory(&self, pc: usize) -> u8 {
+    pub fn read_memory(&self, pc: u16) -> u8 {
         let address = match pc {
             0x0000..=0x3fff => { println!("ROM Bank 0"); self.rom_bank_0[pc as usize]  }, //Fixed bank, rom_bank_0
             0x4000..=0x7fff => { println!("ROM Bank 1"); self.rom_bank_n[pc as usize - 0x4000] },
@@ -110,9 +110,9 @@ impl Chip {
         address
     }
     pub fn fetch(&mut self) {
-        self.instr = self.read_memory(self.pc as usize);
-        let arg1 = self.read_memory(self.pc as usize + 1);
-        let arg2 = self.read_memory(self.pc as usize + 2);
+        self.instr = self.read_memory(self.pc);
+        let arg1 = self.read_memory(self.pc + 1);
+        let arg2 = self.read_memory(self.pc + 2);
         self.byte2 = arg1;
         self.byte3 = arg2;
         println!("Instr: 0x{:02X}", self.instr);
@@ -134,6 +134,37 @@ impl Chip {
             0b101 => {(self.h as u16) << 8 | self.l as u16 },
             0b111 => { self.sp },
             _ => { panic!("Cannot get register address: Unknown register code {}", register_code) }
+        }
+    }
+
+
+    fn get_r8_register(&mut self, register_code: u8) -> u8 {
+        match register_code {
+            0 => { self.b },
+            1 => { self.c },
+            2 => { self.d },
+            3 => { self.e },
+            4 => { self.h },
+            5 => { self.l },
+            6 => { let memory_address = self.get_r16_register_memory_address(0b101); self.read_memory(memory_address) }, //[HL]
+            7 => { self.a },
+            _ => { panic!("Cannot get register code: Unknown register code {}", register_code) }
+
+        }
+    }
+
+    fn set_r8_register(&mut self, register_code: u8, value: u8) {
+        match register_code {
+            0 => { self.b = value },
+            1 => { self.c = value },
+            2 => { self.d = value },
+            3 => { self.e = value },
+            4 => { self.h = value },
+            5 => { self.l = value },
+            6 => { let memory_address = self.get_r16_register_memory_address(0b101); self.write_memory(memory_address, value) }, //[HL]
+            7 => { self.a = value },
+            _ => { panic!("Cannot get register code: Unknown register code {}", register_code) }
+
         }
     }
 
@@ -182,20 +213,20 @@ impl Chip {
         match (oct1, oct2, oct3) {
             (0b11, 0b001, 0b001) => {  }, //CB-prefixed instructions
             (0b00, 0b000, 0b000) => { println!("NOOP") }, //noop
-            (0b00, 0b001, 0b000) => { self.ld_xx_sp() }, //LD (u16), SP
+            (0b00, 0b001, 0b000) => { self.ld_u16_sp() }, //LD (u16), SP
             (0b00, 0b010, 0b000) => { println!("STOP") }, //STOP
             (0b00, 0b011, 0b000) => { self.jr() }, //JR
             (0b00, 0b100..=0b111, 0b000) => { self.jr_cond(oct2) }, //JR conditonal
-            (0b00,0b000|0b010|0b100|0b110, 0b001) => { self.ld_nn_rr(oct2) }, //LD r16, u16
-            (0b00,0b001|0b011|0b101|0b111, 0b001) => { self.add_hl_rr(oct2) }, //ADD HL, r16
+            (0b00,0b000|0b010|0b100|0b110, 0b001) => { self.ld_r16_u16(oct2) }, //LD r16, u16
+            (0b00,0b001|0b011|0b101|0b111, 0b001) => { self.add_hl_r16(oct2) }, //ADD HL, r16
             (0b00,0b000|0b010|0b100|0b110, 0b010) => { self.ld_r16_addr_a(oct2) }, //LD (r16), A
-            (0b00,0b001|0b011|0b101|0b111, 0b010) => {  }, //LD A, (r16)
-            (0b00,0b000|0b010|0b100|0b110, 0b011) => {  }, //INC r16
-            (0b00,0b001|0b011|0b101|0b111, 0b011) => {  }, //DEC r16
-            (0b00, r8, 0b100) => {  }, //INC r8
-            (0b00, r8, 0b101) => {  }, //DEC r8
-            (0b00, r8, 0b110) => {  }, //LD r8, u8
-            (0b00, opcode, 0b111) => {  }, //Opcode grp 1
+            (0b00,0b001|0b011|0b101|0b111, 0b010) => { self.ld_a_r16_addr(oct2) }, //LD A, (r16)
+            (0b00,0b000|0b010|0b100|0b110, 0b011) => { self.inc_r16(oct2) }, //INC r16
+            (0b00,0b001|0b011|0b101|0b111, 0b011) => { self.dec_r16(oct2) }, //DEC r16
+            (0b00, r8, 0b100) => { self.inc_r8(r8) }, //INC r8
+            (0b00, r8, 0b101) => { self.dec_r8(r8) }, //DEC r8
+            (0b00, r8, 0b110) => { self.ld_r8_n8(r8) }, //LD r8, u8
+            (0b00, opcode, 0b111) => { self.special_opcodes(opcode) }, //Opcode grp 1
             (0b01, 0b110, 0b110) => {  }, //HALT
             (0b01, src_r8, dst_r8) => {  }, //LD r8, r8
             (0b10, op, r8) => { self.alu_a_r8(op, r8);  }, //ALU A, r8
@@ -232,34 +263,80 @@ impl Chip {
     }
 
 
+    //TODO
+    fn special_opcodes(&mut self, opcode: u8) {
+    }
+
+    fn ld_r8_n8(&mut self, r8: u8) {
+        self.set_r8_register(r8, self.byte2);
+    }
+
+
+    //Increment value in register r8 by 1
+    fn inc_r8(&mut self, register_lookup: u8) {
+        let register = self.get_r8_register(register_lookup);
+        let sum = register.wrapping_add(1);
+        if sum == 0 { self.flags.zero = 0 }
+        self.flags.n = 0;
+        if ((0xf & register).wrapping_add(0xf & 1)) & 0x10 == 0x10 { self.flags.h = 1 }
+        self.set_r8_register(register_lookup, sum);
+    }
+
+    //Decrement value in register r8 by 1
+    fn dec_r8(&mut self, register_lookup: u8) {
+        let register = self.get_r8_register(register_lookup);
+        let sum = register.wrapping_sub(1);
+        if sum == 0 { self.flags.zero = 0 }
+        self.flags.n = 1;
+        if ((0xf & register).wrapping_sub(0xf & 1)) & 0x10 == 0x10 { self.flags.h = 1 }
+        self.set_r8_register(register_lookup, sum);
+    }
+
+    //Increment value in register r16 by 1
+    fn inc_r16(&mut self, register_lookup: u8) {
+        let mut register = self.get_r16_register_address(register_lookup);
+        register = register.wrapping_add(1);
+        self.set_r16_register_address(register_lookup, register);
+    }
+
+    //Decrement value in register r16 by 1
+    fn dec_r16(&mut self, register_lookup: u8) {
+        let mut register = self.get_r16_register_address(register_lookup);
+        register = register.wrapping_sub(1);
+        self.set_r16_register_address(register_lookup, register);
+    }
+
+    //Load value pointed in memory by r16 register pair into register A
+    fn ld_a_r16_addr(&mut self, register_lookup: u8) {
+        let memory_address = self.get_r16_register_memory_address(register_lookup);
+        self.a = self.read_memory(memory_address);
+    }
     // Load the 8 bit value in register A to the memory address pointed by the register from the
     // table
-    fn ld_r16_addr_a(&mut self, register: u8) {
-        let memory_address = self.get_r16_register_memory_address(register);
+    fn ld_r16_addr_a(&mut self, register_lookup: u8) {
+        let memory_address = self.get_r16_register_memory_address(register_lookup);
         self.write_memory(memory_address, self.a);
     }
 
     //Add register r16 value to HL
-    fn add_hl_rr(&mut self, register: u8) {
-        let r16 = self.get_r16_register_address(register);
+    fn add_hl_r16(&mut self, register_lookup: u8) {
+        let r16 = self.get_r16_register_address(register_lookup);
         let hl = self.get_r16_register_address(0b101); //0b101 == HL register pair
         let (sum, overflow_high) = r16.overflowing_add(hl);
-        self.h = (sum >> 8) as u8;
-        self.l = (sum & 0xff) as u8;
+        self.set_r16_register_address(0b101, sum);
 
         //Additions reset the n flag
         self.flags.n = 0;
         //Check 11th to 12th bit overflow
-        self.flags.h = (r16 & 0xfff).overflowing_add(hl & 0xfff).1 as u8;
+        if (r16 & 0xfff).overflowing_add(hl & 0xfff).1 as u8 == 1 { self.flags.h = 1 };
         //Check 15th to 16th bit overflow
-        self.flags.carry = overflow_high as u8;
-        
+        if overflow_high { self.flags.carry = overflow_high as u8 };
     }
 
     //Load value u16 into register r16
-    fn ld_nn_rr(&mut self, register: u8) {
+    fn ld_r16_u16(&mut self, register_lookup: u8) {
         let address = (self.byte2 as u16) << 8 | self.byte3 as u16; 
-        self.set_r16_register_address(register, address);
+        self.set_r16_register_address(register_lookup, address);
     }
 
     //Conditional Jump
@@ -285,7 +362,7 @@ impl Chip {
     }
 
     //Store SP lower at address u16, and SP upper at address u16 + 1
-    fn ld_xx_sp(&mut self) {
+    fn ld_u16_sp(&mut self) {
         let address: u16 = (self.byte2 as u16) << 8 | self.byte3 as u16;
         self.write_memory(address, (self.sp & 0xff) as u8);
         self.write_memory(address + 1, (self.sp >> 8) as u8);
@@ -328,7 +405,7 @@ impl Chip {
             5 => { self.l },
             6 => { 
                 let ptr =  ((self.h as u16) << 8) as u16 | self.l as u16;
-                self.read_memory(ptr as usize)
+                self.read_memory(ptr)
             },
             7 => { self.a },
             _ => { panic!("Wrong register read for XOR_R") }
