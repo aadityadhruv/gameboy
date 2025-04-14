@@ -227,8 +227,8 @@ impl Chip {
             (0b00, r8, 0b101) => { self.dec_r8(r8) }, //DEC r8
             (0b00, r8, 0b110) => { self.ld_r8_n8(r8) }, //LD r8, u8
             (0b00, opcode, 0b111) => { self.special_opcodes(opcode) }, //Opcode grp 1
-            (0b01, 0b110, 0b110) => {  }, //HALT
-            (0b01, src_r8, dst_r8) => {  }, //LD r8, r8
+            (0b01, 0b110, 0b110) => { self.halt() }, //HALT
+            (0b01, dst_r8, src_r8) => { self.ld_r8_r8(src_r8, dst_r8) }, //LD r8, r8
             (0b10, op, r8) => { self.alu_a_r8(op, r8);  }, //ALU A, r8
             (0b11, 0b000..=0b011, 0b000) => {  }, //RET condition
             (0b11, 0b100, 0b000) => {  }, //LD (FF00 + u8), A
@@ -255,7 +255,7 @@ impl Chip {
 //            0x00 => { println!("NOOP!") }
 //            0x32 => { self.ldd_hl_a() }
 //            0x0e | 0x06 => { self.ld_rr(); next = 1; }
-//            0xa8..=0xaf => { self.xor_r() }
+//            0xa8..=0xaf => { self.xor_a_r8() }
 //            0x01 | 0x11 | 0x21 | 0x31 => { self.ld_rr_nn(); next = 2; },
 //            _ => { println!("Error: 0x{:02X} not implemented!", self.instr); std::process::exit(1); }
 //        }
@@ -263,6 +263,17 @@ impl Chip {
     }
 
 
+    // Load value from dst_r8 into src_r8. When called as LD r1 r2, this method
+    // is called as ld_r8_r8(r2, r1) (Notice the inversion)
+    fn ld_r8_r8(&mut self, src_r8: u8, dst_r8: u8) {
+        let value = self.get_r8_register(src_r8);
+        self.set_r8_register(dst_r8, value);
+
+    }
+    //TODO - Respond to interrupt
+    fn halt(&mut self) {
+
+    }
     //TODO
     fn special_opcodes(&mut self, opcode: u8) {
     }
@@ -368,34 +379,28 @@ impl Chip {
         self.write_memory(address + 1, (self.sp >> 8) as u8);
     }
 
+    //All math based operations are processed here
     fn alu_a_r8(&mut self, opcode: u8, r8: u8) {
         match opcode {
-            1 => { self.adc_r(r8) },
-            5 => { self.xor_r(r8) },
+            0b000 => { self.add_a_r8(r8) },
+            0b001 => { self.adc_a_r8(r8) },
+            0b010 => { self.sub_a_r8(r8) },
+            0b011 => { self.sbc_a_r8(r8) },
+            0b100 => { self.and_a_r8(r8) },
+            0b101 => { self.xor_a_r8(r8) },
+            0b110 => { self.or_a_r8(r8) },
+            0b111 => { self.cp_a_r8(r8) },
             _ => {}
         }
     }
-    
-    fn ld_rr(&mut self) {
-        match self.instr {
-            0x0e => { self.c = self.byte2 },
-            0x06 => { self.b = self.byte2 },
-            _ => {},
-        }
-    }
-    
-    fn ldd_hl_a(&mut self) {
-        let mut pc = ((self.h as u16) << 8) as u16 | self.l as u16;
-        self.write_memory(pc, self.a);
-        pc -= 1;
-        self.h = (pc >> 8) as u8;
-        self.l = (pc << 8 >> 8) as u8;
-    }
 
-    fn adc_r(&mut self, r8: u8) {
+    fn add_a_r8(&mut self, r8: u8) {
+    }
+    fn adc_a_r8(&mut self, r8: u8) {
         self.a += self.flags.carry + r8;
     }
-    fn xor_r(&mut self, r8: u8) {
+
+    fn xor_a_r8(&mut self, r8: u8) {
         let value = match r8 {
             0 => { self.b },
             1 => { self.c },
@@ -412,6 +417,22 @@ impl Chip {
         };
         self.a = self.a ^ value;
         self.flags.zero = (self.a == 0) as u8
+    }
+    
+    fn ld_rr(&mut self) {
+        match self.instr {
+            0x0e => { self.c = self.byte2 },
+            0x06 => { self.b = self.byte2 },
+            _ => {},
+        }
+    }
+    
+    fn ldd_hl_a(&mut self) {
+        let mut pc = ((self.h as u16) << 8) as u16 | self.l as u16;
+        self.write_memory(pc, self.a);
+        pc -= 1;
+        self.h = (pc >> 8) as u8;
+        self.l = (pc << 8 >> 8) as u8;
     }
 
     fn jmp_nn(&mut self) {
