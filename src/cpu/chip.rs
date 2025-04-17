@@ -201,6 +201,19 @@ impl Chip {
         }
     }
    
+    // Return the half-carry and carry of adding two u8s
+    fn check_carry_add_u8(&self, lhs: u8, rhs: u8) -> (bool, bool) {
+        let (_, carry) = lhs.overflowing_add(rhs);
+        let half_carry = ((lhs & 0xf).wrapping_add(rhs & 0xf)) & 0x10 == 0x10;
+        return (half_carry, carry);
+    }
+    // Return the half-carry and carry of subtracting two u8s
+    fn check_carry_sub_u8(&self, lhs: u8, rhs: u8) -> (bool, bool) {
+        let (_, carry) = lhs.overflowing_sub(rhs);
+        let half_carry = ((lhs & 0xf).wrapping_sub(rhs & 0xf)) & 0x10 == 0x10; //NOTE: This might need a rework
+        return (half_carry, carry);
+    }
+
     pub fn execute(&mut self) {
         let mut next = 0;
 
@@ -251,14 +264,6 @@ impl Chip {
             _ => { println!("Error: 0x{:02X} not implemented!", self.instr); std::process::exit(1); },
         }
 
-//        match self.instr {
-//            0x00 => { println!("NOOP!") }
-//            0x32 => { self.ldd_hl_a() }
-//            0x0e | 0x06 => { self.ld_rr(); next = 1; }
-//            0xa8..=0xaf => { self.xor_a_r8() }
-//            0x01 | 0x11 | 0x21 | 0x31 => { self.ld_rr_nn(); next = 2; },
-//            _ => { println!("Error: 0x{:02X} not implemented!", self.instr); std::process::exit(1); }
-//        }
         self.pc += next;
     }
 
@@ -270,16 +275,14 @@ impl Chip {
         self.set_r8_register(dst_r8, value);
 
     }
+
     //TODO - Respond to interrupt
     fn halt(&mut self) {
 
     }
+
     //TODO
     fn special_opcodes(&mut self, opcode: u8) {
-    }
-
-    fn ld_r8_n8(&mut self, r8: u8) {
-        self.set_r8_register(r8, self.byte2);
     }
 
 
@@ -289,7 +292,8 @@ impl Chip {
         let sum = register.wrapping_add(1);
         if sum == 0 { self.flags.zero = 0 }
         self.flags.n = 0;
-        if ((0xf & register).wrapping_add(0xf & 1)) & 0x10 == 0x10 { self.flags.h = 1 }
+        let (half_carry, _) = self.check_carry_add_u8(register, 1);
+        if half_carry { self.flags.h = 1 }
         self.set_r8_register(register_lookup, sum);
     }
 
@@ -299,7 +303,8 @@ impl Chip {
         let sum = register.wrapping_sub(1);
         if sum == 0 { self.flags.zero = 0 }
         self.flags.n = 1;
-        if ((0xf & register).wrapping_sub(0xf & 1)) & 0x10 == 0x10 { self.flags.h = 1 }
+        let (half_carry, _) = self.check_carry_sub_u8(register, 1);
+        if half_carry{ self.flags.h = 1 }
         self.set_r8_register(register_lookup, sum);
     }
 
@@ -315,6 +320,11 @@ impl Chip {
         let mut register = self.get_r16_register_address(register_lookup);
         register = register.wrapping_sub(1);
         self.set_r16_register_address(register_lookup, register);
+    }
+
+    //Load value  n8 into register r8
+    fn ld_r8_n8(&mut self, r8: u8) {
+        self.set_r8_register(r8, self.byte2);
     }
 
     //Load value pointed in memory by r16 register pair into register A
@@ -334,14 +344,15 @@ impl Chip {
         let r16 = self.get_r16_register_address(register_lookup);
         let hl = self.get_r16_register_address(0b101); //0b101 == HL register pair
         let (sum, overflow_high) = r16.overflowing_add(hl);
-        self.set_r16_register_address(0b101, sum);
 
         //Additions reset the n flag
         self.flags.n = 0;
         //Check 11th to 12th bit overflow
-        if (r16 & 0xfff).overflowing_add(hl & 0xfff).1 as u8 == 1 { self.flags.h = 1 };
+        if (r16 & 0xfff).overflowing_add(hl & 0xfff).1 as u8 == 1 { self.flags.h = 1 }
         //Check 15th to 16th bit overflow
-        if overflow_high { self.flags.carry = overflow_high as u8 };
+        if overflow_high { self.flags.carry = 1 }
+
+        self.set_r16_register_address(0b101, sum);
     }
 
     //Load value u16 into register r16
@@ -390,65 +401,91 @@ impl Chip {
             0b101 => { self.xor_a_r8(r8) },
             0b110 => { self.or_a_r8(r8) },
             0b111 => { self.cp_a_r8(r8) },
-            _ => {}
+            _ => { panic!("Invalid ALU A R8 Operation: opcode: {}, register: {}", opcode, r8)}
         }
     }
 
+    //Add the value in r8 to the a register
     fn add_a_r8(&mut self, r8: u8) {
+        let reg_val = self.get_r8_register(r8);
+        let (half_carry, carry) = self.check_carry_add_u8(self.a, reg_val);
+        self.a = self.a.wrapping_add(reg_val);
+        if half_carry { self.flags.h = 1 }
+        if carry { self.flags.carry = 1 }
+        if self.a == 0 { self.flags.zero = 0 }
+        self.flags.n = 0;
     }
+    //Add the value in r8 to the a register, along with the value of the carry flag
     fn adc_a_r8(&mut self, r8: u8) {
-        self.a += self.flags.carry + r8;
+        let sum = self.get_r8_register(r8).wrapping_add(self.flags.carry);
+        let (half_carry, carry) = self.check_carry_add_u8(self.a, sum);
+        self.a = self.a.wrapping_add(sum);
+
+        if half_carry { self.flags.h = 1 }
+        if carry { self.flags.carry = 1 }
+        if self.a == 0 { self.flags.zero = 0 }
+        self.flags.n = 0;
+
+    }
+    //Sub the value in r8 from the a register
+    fn sub_a_r8(&mut self, r8: u8) {
+        let reg_val = self.get_r8_register(r8);
+        let (half_carry, carry) = self.check_carry_sub_u8(self.a, reg_val);
+        self.a = self.a.wrapping_sub(reg_val);
+
+        if half_carry { self.flags.h = 1 }
+        if carry { self.flags.carry = 1 }
+        if self.a == 0 { self.flags.zero = 0 }
+        self.flags.n = 1;
+    }
+    //Sub the value in r8 from the a register along with the value of the carry flag
+    fn sbc_a_r8(&mut self, r8: u8) {
+        let sum = self.get_r8_register(r8).wrapping_add(self.flags.carry);
+        let (half_carry, carry) = self.check_carry_sub_u8(self.a, sum);
+        self.a = self.a.wrapping_sub(sum);
+
+        if half_carry { self.flags.h = 1 }
+        if carry { self.flags.carry = 1 }
+        if self.a == 0 { self.flags.zero = 0 }
+        self.flags.n = 1;
     }
 
+    //Bitwise AND between r8 value and A
+    fn and_a_r8(&mut self, r8: u8) {
+        self.a = self.a & self.get_r8_register(r8);
+        if self.a == 0 { self.flags.zero = 0 }
+        self.flags.n = 0;
+        self.flags.h = 1;
+        self.flags.carry = 0;
+    }
+
+    //Bitwise XOR between r8 value and A
     fn xor_a_r8(&mut self, r8: u8) {
-        let value = match r8 {
-            0 => { self.b },
-            1 => { self.c },
-            2 => { self.d },
-            3 => { self.e },
-            4 => { self.h },
-            5 => { self.l },
-            6 => { 
-                let ptr =  ((self.h as u16) << 8) as u16 | self.l as u16;
-                self.read_memory(ptr)
-            },
-            7 => { self.a },
-            _ => { panic!("Wrong register read for XOR_R") }
-        };
-        self.a = self.a ^ value;
-        self.flags.zero = (self.a == 0) as u8
-    }
-    
-    fn ld_rr(&mut self) {
-        match self.instr {
-            0x0e => { self.c = self.byte2 },
-            0x06 => { self.b = self.byte2 },
-            _ => {},
-        }
-    }
-    
-    fn ldd_hl_a(&mut self) {
-        let mut pc = ((self.h as u16) << 8) as u16 | self.l as u16;
-        self.write_memory(pc, self.a);
-        pc -= 1;
-        self.h = (pc >> 8) as u8;
-        self.l = (pc << 8 >> 8) as u8;
+        self.a = self.a ^ self.get_r8_register(r8);
+        if self.a == 0 { self.flags.zero = 0 }
+        self.flags.n = 0;
+        self.flags.h = 0;
+        self.flags.carry = 0;
     }
 
-    fn jmp_nn(&mut self) {
-        println!("{:02X}, {:02X}", self.byte2, self.byte3);
-        self.pc = ((self.byte3 as u16) << 8) as u16 | self.byte2 as u16;
-        println!("Jumping to 0x{:02X}", self.pc);
+    //Bitwise OR between r8 value and A
+    fn or_a_r8(&mut self, r8: u8) {
+        self.a = self.a | self.get_r8_register(r8);
+        if self.a == 0 { self.flags.zero = 0 }
+        self.flags.n = 0;
+        self.flags.h = 0;
+        self.flags.carry = 0;
     }
 
-    fn ld_rr_nn(&mut self) {
-        match self.instr {
-            0x01 => { self.b = self.byte3; self.c = self.byte2;  }, //BC = nn (nn = MSB << 8 | LSB)
-            0x11 => { self.d = self.byte3; self.e = self.byte2;  }, //DE = nn (nn = MSB << 8 | LSB)
-            0x21 => { self.h = self.byte3; self.l = self.byte2;  }, //HL = nn (nn = MSB << 8 | LSB)
-            0x31 => { self.sp = ((self.byte3 as u16) << 8)  as u16 | self.byte2 as u16  }, //HL = nn (nn = MSB << 8 | LSB)
-            _ => {  },
-        }
+    //Subtract value in r8 from A, but don't store the result, only set flags
+    fn cp_a_r8(&mut self, r8: u8) {
+        let reg_val = self.get_r8_register(r8);
+        let (half_carry, carry) = self.check_carry_sub_u8(self.a, reg_val);
+        let tmp = self.a.wrapping_sub(reg_val);
+
+        if half_carry { self.flags.h = 1 }
+        if carry { self.flags.carry = 1 }
+        if tmp == 0 { self.flags.zero = 0 }
+        self.flags.n = 1;
     }
-    
 }
