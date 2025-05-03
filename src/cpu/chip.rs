@@ -243,8 +243,8 @@ impl Chip {
             (0b01, 0b110, 0b110) => { self.halt() }, //HALT
             (0b01, dst_r8, src_r8) => { self.ld_r8_r8(src_r8, dst_r8) }, //LD r8, r8
             (0b10, op, r8) => { self.alu_a_r8(op, r8);  }, //ALU A, r8
-            (0b11, 0b000..=0b011, 0b000) => {  }, //RET condition
-            (0b11, 0b100, 0b000) => {  }, //LD (FF00 + u8), A
+            (0b11, 0b000..=0b011, 0b000) => { }, //RET condition
+            (0b11, 0b100, 0b000) => { self.ldh_r16_a(oct2) }, //LD (FF00 + u8), A
             (0b11, 0b101, 0b000) => {  }, //ADD SP, i8
             (0b11, 0b110, 0b000) => {  }, //LD A, (FF00 + u8)
             (0b11, 0b111, 0b000) => {  }, //LD HL, SP + i8
@@ -274,6 +274,14 @@ impl Chip {
         let value = self.get_r8_register(src_r8);
         self.set_r8_register(dst_r8, value);
 
+    }
+
+    fn ldh_r16_a(&mut self, memory: u8) {
+        let memory: u16 = 0xFF00 + memory as u16;
+        if memory < 0xffff && memory > 0xff00 {
+            let value = self.get_r8_register(7);
+            self.write_memory(memory, value);
+        }
     }
 
     //TODO - Respond to interrupt
