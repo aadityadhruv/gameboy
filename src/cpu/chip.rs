@@ -3,6 +3,77 @@ use std::io::Read;
 
 
 #[derive(Debug)]
+enum REGISTER8 {
+    UD = -1,
+    B = 0,
+    C = 1,
+    D = 2,
+    E = 3,
+    H = 4,
+    L = 5,
+    HL = 6,
+    A = 7,
+}
+
+impl From<u8> for REGISTER8 {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => REGISTER8::B,
+            1 => REGISTER8::C,
+            2 => REGISTER8::D,
+            3 => REGISTER8::E,
+            4 => REGISTER8::H,
+            5 => REGISTER8::L,
+            6 => REGISTER8::HL,
+            7 => REGISTER8::B,
+            _ => REGISTER8::UD
+        }
+    }
+}
+
+#[derive(Debug)]
+enum REGISTER16 {
+    UD = -1,
+    BC = 0b001,
+    DE = 0b011,
+    HL = 0b101,
+    SP = 0b111,
+}
+
+impl From<u8> for REGISTER16 {
+    fn from(value: u8) -> Self {
+        match value {
+            0b001 => REGISTER16::BC,
+            0b011 => REGISTER16::DE,
+            0b101 => REGISTER16::HL,
+            0b111 => REGISTER16::SP,
+            _ => REGISTER16::UD
+        }
+    }
+}
+
+#[derive(Debug)]
+enum REGISTER16MEM {
+    UD = -1,
+    BC = 0b001,
+    DE = 0b011,
+    HLI = 0b101, //HL+
+    HLD = 0b111, //HL-
+}
+
+impl From<u8> for REGISTER16MEM {
+    fn from(value: u8) -> Self {
+        match value {
+            0b001 => REGISTER16MEM::BC,
+            0b011 => REGISTER16MEM::DE,
+            0b101 => REGISTER16MEM::HLI,
+            0b111 => REGISTER16MEM::HLD,
+            _ => REGISTER16MEM::UD
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct Flags {
     pub zero: u8, //Zero flag
     pub n: u8, //Subtraction flag (BCD)
@@ -78,10 +149,17 @@ impl Chip {
         }
         self.pc = 0x0100;
     }
-    pub fn write_memory(&mut self, pc: u16, value: u8) {
-        match pc {
-            0x0000..=0x3fff => { println!("Writing: ROM Bank 0"); self.rom_bank_0[pc as usize] = value  }, //Fixed bank, rom_bank_0
-            0x4000..=0x7fff => { println!("Writing: ROM Bank 1"); self.rom_bank_n[pc as usize - 0x4000] = value },
+    /// Write to memory
+    /// Write a 8 bit value to memory addressed in 16 bits
+    /// The function decides which bank to write to based on the address value
+    /// # Arguments
+    ///
+    /// * `address` - Address to write to
+    /// * `value` - Value to write to address
+    pub fn write_memory(&mut self, address: u16, value: u8) {
+        match address {
+            0x0000..=0x3fff => { println!("Writing: ROM Bank 0"); self.rom_bank_0[address as usize] = value  }, //Fixed bank, rom_bank_0
+            0x4000..=0x7fff => { println!("Writing: ROM Bank 1"); self.rom_bank_n[address as usize - 0x4000] = value },
             0x8000..=0x9fff => {  },
             0xa000..=0xbfff => {  },
             0xc000..=0xcfff => {  },
@@ -93,10 +171,16 @@ impl Chip {
             _ => {  }
         };
     }
-    pub fn read_memory(&self, pc: u16) -> u8 {
-        let address = match pc {
-            0x0000..=0x3fff => { println!("ROM Bank 0"); self.rom_bank_0[pc as usize]  }, //Fixed bank, rom_bank_0
-            0x4000..=0x7fff => { println!("ROM Bank 1"); self.rom_bank_n[pc as usize - 0x4000] },
+    /// Read from memory
+    /// Same as write_memory, but read from the correct rom bank instead
+    /// # Arguments
+    ///
+    /// * `address` - 16 bit address to access
+    ///
+    pub fn read_memory(&self, address: u16) -> u8 {
+        let address = match address {
+            0x0000..=0x3fff => { println!("ROM Bank 0"); self.rom_bank_0[address as usize]  }, //Fixed bank, rom_bank_0
+            0x4000..=0x7fff => { println!("ROM Bank 1"); self.rom_bank_n[address as usize - 0x4000] },
             0x8000..=0x9fff => { 0x0 },
             0xa000..=0xbfff => { 0x0 },
             0xc000..=0xcfff => { 0x0 },
@@ -120,84 +204,98 @@ impl Chip {
         println!("0x{:02X?}", &self.rom_bank_0[self.pc as usize..(self.pc + 10) as usize]);
     }
 
+
+    /// Return the value of a register
+    ///
+    /// # Arguments
+    ///
+    /// * `register_code` - The code of the register to access
+    ///
+    fn get_r8_register(&mut self, register_code: REGISTER8) -> u8 {
+        match register_code {
+            REGISTER8::B => { self.b },
+            REGISTER8::C => { self.c },
+            REGISTER8::D => { self.d },
+            REGISTER8::E => { self.e },
+            REGISTER8::H => { self.h },
+            REGISTER8::L => { self.l },
+            REGISTER8::HL=> { let memory_address = self.get_r16_register(REGISTER16::HL); self.read_memory(memory_address) }, //[HL]
+            REGISTER8::A => { self.a },
+            _ => { panic!("Cannot get register code: Unknown register code {:?}", register_code) }
+
+        }
+    }
+
+    /// Set a register's value
+    ///
+    /// # Arguments
+    ///
+    /// * `register_code` - The register to change
+    /// * `value` - New value of register
+    ///
+    fn set_r8_register(&mut self, register_code: REGISTER8, value: u8) {
+        match register_code {
+            REGISTER8::B => { self.b = value },
+            REGISTER8::C => { self.c = value },
+            REGISTER8::D => { self.d = value },
+            REGISTER8::E => { self.e = value },
+            REGISTER8::H => { self.h = value },
+            REGISTER8::L => { self.l = value },
+            REGISTER8::HL => { let memory_address = self.get_r16_register(REGISTER16::HL); self.write_memory(memory_address, value) }, //[HL]
+            REGISTER8::A => { self.a = value },
+            _ => { panic!("Cannot get register code: Unknown register code {:?}", register_code) }
+
+        }
+    }
+
     //Lookup the u8 register table to get the u16 address we want to look at. We are constructing the address
     //to read/write from/to based on this table
-    fn get_r16_register_address(&self, register_code: u8) -> u16 {
+    fn get_r16_register(&self, register_code: REGISTER16) -> u16 {
         //Example
         // reg b = 0x00ca
         // reg c = 0x00fe
         // reg b << 8 = 0xca00
         // bitwise OR with reg c results in 0xcafe
         match register_code {
-            0b001 => { (self.b as u16) << 8 | self.c as u16 },
-            0b011 => {  (self.d as u16) << 8 | self.e as u16 },
-            0b101 => {(self.h as u16) << 8 | self.l as u16 },
-            0b111 => { self.sp },
-            _ => { panic!("Cannot get register address: Unknown register code {}", register_code) }
+            REGISTER16::BC => { (self.b as u16) << 8 | self.c as u16 },
+            REGISTER16::DE => {  (self.d as u16) << 8 | self.e as u16 },
+            REGISTER16::HL => {(self.h as u16) << 8 | self.l as u16 },
+            REGISTER16::SP => { self.sp },
+            _ => { panic!("Cannot get register address: Unknown register code {:?}", register_code) }
         }
     }
 
-
-    fn get_r8_register(&mut self, register_code: u8) -> u8 {
-        match register_code {
-            0 => { self.b },
-            1 => { self.c },
-            2 => { self.d },
-            3 => { self.e },
-            4 => { self.h },
-            5 => { self.l },
-            6 => { let memory_address = self.get_r16_register_memory_address(0b101); self.read_memory(memory_address) }, //[HL]
-            7 => { self.a },
-            _ => { panic!("Cannot get register code: Unknown register code {}", register_code) }
-
-        }
-    }
-
-    fn set_r8_register(&mut self, register_code: u8, value: u8) {
-        match register_code {
-            0 => { self.b = value },
-            1 => { self.c = value },
-            2 => { self.d = value },
-            3 => { self.e = value },
-            4 => { self.h = value },
-            5 => { self.l = value },
-            6 => { let memory_address = self.get_r16_register_memory_address(0b101); self.write_memory(memory_address, value) }, //[HL]
-            7 => { self.a = value },
-            _ => { panic!("Cannot get register code: Unknown register code {}", register_code) }
-
-        }
-    }
 
     // Write a 16 bit value to a pair of registers based on the usual pairing
-    fn set_r16_register_address(&mut self, register_code: u8, value: u16) {
+    fn set_r16_register(&mut self, register_code: REGISTER16, value: u16) {
         let high = (value >> 8) as u8;
         let low = (value & 0xff) as u8;
         match register_code {
-            0b001 => { self.b = high; self.c = low; },
-            0b011 => {  self.d = high; self.e = low; },
-            0b101 => { self.h = high; self.l = low; },
-            0b111 => { self.sp = value; },
-            _ => { panic!("Cannot set register address: Unknown register code {}", register_code) }
+            REGISTER16::BC => { self.b = high; self.c = low; },
+            REGISTER16::DE => {  self.d = high; self.e = low; },
+            REGISTER16::HL => { self.h = high; self.l = low; },
+            REGISTER16::SP => { self.sp = value; },
+            _ => { panic!("Cannot set register address: Unknown register code {:?}", register_code) }
         };
     }
     // Get the memory address pointed to by a register pair. This is basically the r16mem table
     // This returns a 16 bit memory address
-    fn get_r16_register_memory_address(&mut self, register_code: u8) -> u16 {
+    fn get_r16mem_register(&mut self, register_code: REGISTER16MEM) -> u16 {
 
         match register_code {
-            0b001 => { (self.b as u16) << 8 | self.c as u16 },
-            0b011 => {  (self.d as u16) << 8 | self.e as u16 },
-            0b101 => {
+            REGISTER16MEM::BC => { (self.b as u16) << 8 | self.c as u16 },
+            REGISTER16MEM::DE => {  (self.d as u16) << 8 | self.e as u16 },
+            REGISTER16MEM::HLI => {
                 let hl = (self.h as u16) << 8 | self.l as u16; //Get current HL value
-                self.set_r16_register_address(0b101, hl+1); //Increment HL value and set it back to HL (ptr++)
+                self.set_r16_register(REGISTER16::HL, hl+1); //Increment HL value and set it back to HL (ptr++)
                 hl //Return HL
             },
-            0b111 => {
+            REGISTER16MEM::HLD => {
                 let hl = (self.h as u16) << 8 | self.l as u16; //Get current HL value
-                self.set_r16_register_address(0b101, hl-1); //Decrement HL value and set it back to HL (ptr--)
+                self.set_r16_register(REGISTER16::HL, hl-1); //Decrement HL value and set it back to HL (ptr--)
                 hl //Return HL
             },
-            _ => { panic!("Cannot get register address: Unknown register code {}", register_code) }
+            _ => { panic!("Cannot get register address: Unknown register code {:?}", register_code) }
         }
     }
    
@@ -271,15 +369,15 @@ impl Chip {
     // Load value from dst_r8 into src_r8. When called as LD r1 r2, this method
     // is called as ld_r8_r8(r2, r1) (Notice the inversion)
     fn ld_r8_r8(&mut self, src_r8: u8, dst_r8: u8) {
-        let value = self.get_r8_register(src_r8);
-        self.set_r8_register(dst_r8, value);
+        let value = self.get_r8_register(src_r8.into());
+        self.set_r8_register(dst_r8.into(), value);
 
     }
 
     fn ldh_r16_a(&mut self, memory: u8) {
         let memory: u16 = 0xFF00 + memory as u16;
         if memory < 0xffff && memory > 0xff00 {
-            let value = self.get_r8_register(7);
+            let value = self.get_r8_register(REGISTER8::L);
             self.write_memory(memory, value);
         }
     }
@@ -296,61 +394,61 @@ impl Chip {
 
     //Increment value in register r8 by 1
     fn inc_r8(&mut self, register_lookup: u8) {
-        let register = self.get_r8_register(register_lookup);
+        let register = self.get_r8_register(register_lookup.into());
         let sum = register.wrapping_add(1);
         if sum == 0 { self.flags.zero = 0 }
         self.flags.n = 0;
         let (half_carry, _) = self.check_carry_add_u8(register, 1);
         if half_carry { self.flags.h = 1 }
-        self.set_r8_register(register_lookup, sum);
+        self.set_r8_register(register_lookup.into(), sum);
     }
 
     //Decrement value in register r8 by 1
     fn dec_r8(&mut self, register_lookup: u8) {
-        let register = self.get_r8_register(register_lookup);
+        let register = self.get_r8_register(register_lookup.into());
         let sum = register.wrapping_sub(1);
         if sum == 0 { self.flags.zero = 0 }
         self.flags.n = 1;
         let (half_carry, _) = self.check_carry_sub_u8(register, 1);
         if half_carry{ self.flags.h = 1 }
-        self.set_r8_register(register_lookup, sum);
+        self.set_r8_register(register_lookup.into(), sum);
     }
 
     //Increment value in register r16 by 1
     fn inc_r16(&mut self, register_lookup: u8) {
-        let mut register = self.get_r16_register_address(register_lookup);
+        let mut register = self.get_r16_register(register_lookup.into());
         register = register.wrapping_add(1);
-        self.set_r16_register_address(register_lookup, register);
+        self.set_r16_register(register_lookup.into(), register);
     }
 
     //Decrement value in register r16 by 1
     fn dec_r16(&mut self, register_lookup: u8) {
-        let mut register = self.get_r16_register_address(register_lookup);
+        let mut register = self.get_r16_register(register_lookup.into());
         register = register.wrapping_sub(1);
-        self.set_r16_register_address(register_lookup, register);
+        self.set_r16_register(register_lookup.into(), register);
     }
 
     //Load value  n8 into register r8
     fn ld_r8_n8(&mut self, r8: u8) {
-        self.set_r8_register(r8, self.byte2);
+        self.set_r8_register(r8.into(), self.byte2);
     }
 
     //Load value pointed in memory by r16 register pair into register A
     fn ld_a_r16_addr(&mut self, register_lookup: u8) {
-        let memory_address = self.get_r16_register_memory_address(register_lookup);
+        let memory_address = self.get_r16mem_register(register_lookup.into());
         self.a = self.read_memory(memory_address);
     }
     // Load the 8 bit value in register A to the memory address pointed by the register from the
     // table
     fn ld_r16_addr_a(&mut self, register_lookup: u8) {
-        let memory_address = self.get_r16_register_memory_address(register_lookup);
+        let memory_address = self.get_r16mem_register(register_lookup.into());
         self.write_memory(memory_address, self.a);
     }
 
     //Add register r16 value to HL
     fn add_hl_r16(&mut self, register_lookup: u8) {
-        let r16 = self.get_r16_register_address(register_lookup);
-        let hl = self.get_r16_register_address(0b101); //0b101 == HL register pair
+        let r16 = self.get_r16_register(register_lookup.into());
+        let hl = self.get_r16_register(REGISTER16::HL); //0b101 == HL register pair
         let (sum, overflow_high) = r16.overflowing_add(hl);
 
         //Additions reset the n flag
@@ -360,13 +458,13 @@ impl Chip {
         //Check 15th to 16th bit overflow
         if overflow_high { self.flags.carry = 1 }
 
-        self.set_r16_register_address(0b101, sum);
+        self.set_r16_register(REGISTER16::HL, sum);
     }
 
     //Load value u16 into register r16
     fn ld_r16_u16(&mut self, register_lookup: u8) {
         let address = (self.byte2 as u16) << 8 | self.byte3 as u16; 
-        self.set_r16_register_address(register_lookup, address);
+        self.set_r16_register(register_lookup.into(), address);
     }
 
     //Conditional Jump
@@ -415,7 +513,7 @@ impl Chip {
 
     //Add the value in r8 to the a register
     fn add_a_r8(&mut self, r8: u8) {
-        let reg_val = self.get_r8_register(r8);
+        let reg_val = self.get_r8_register(r8.into());
         let (half_carry, carry) = self.check_carry_add_u8(self.a, reg_val);
         self.a = self.a.wrapping_add(reg_val);
         if half_carry { self.flags.h = 1 }
@@ -425,7 +523,7 @@ impl Chip {
     }
     //Add the value in r8 to the a register, along with the value of the carry flag
     fn adc_a_r8(&mut self, r8: u8) {
-        let sum = self.get_r8_register(r8).wrapping_add(self.flags.carry);
+        let sum = self.get_r8_register(r8.into()).wrapping_add(self.flags.carry);
         let (half_carry, carry) = self.check_carry_add_u8(self.a, sum);
         self.a = self.a.wrapping_add(sum);
 
@@ -437,7 +535,7 @@ impl Chip {
     }
     //Sub the value in r8 from the a register
     fn sub_a_r8(&mut self, r8: u8) {
-        let reg_val = self.get_r8_register(r8);
+        let reg_val = self.get_r8_register(r8.into());
         let (half_carry, carry) = self.check_carry_sub_u8(self.a, reg_val);
         self.a = self.a.wrapping_sub(reg_val);
 
@@ -448,7 +546,7 @@ impl Chip {
     }
     //Sub the value in r8 from the a register along with the value of the carry flag
     fn sbc_a_r8(&mut self, r8: u8) {
-        let sum = self.get_r8_register(r8).wrapping_add(self.flags.carry);
+        let sum = self.get_r8_register(r8.into()).wrapping_add(self.flags.carry);
         let (half_carry, carry) = self.check_carry_sub_u8(self.a, sum);
         self.a = self.a.wrapping_sub(sum);
 
@@ -460,7 +558,7 @@ impl Chip {
 
     //Bitwise AND between r8 value and A
     fn and_a_r8(&mut self, r8: u8) {
-        self.a = self.a & self.get_r8_register(r8);
+        self.a = self.a & self.get_r8_register(r8.into());
         if self.a == 0 { self.flags.zero = 0 }
         self.flags.n = 0;
         self.flags.h = 1;
@@ -469,7 +567,7 @@ impl Chip {
 
     //Bitwise XOR between r8 value and A
     fn xor_a_r8(&mut self, r8: u8) {
-        self.a = self.a ^ self.get_r8_register(r8);
+        self.a = self.a ^ self.get_r8_register(r8.into());
         if self.a == 0 { self.flags.zero = 0 }
         self.flags.n = 0;
         self.flags.h = 0;
@@ -478,7 +576,7 @@ impl Chip {
 
     //Bitwise OR between r8 value and A
     fn or_a_r8(&mut self, r8: u8) {
-        self.a = self.a | self.get_r8_register(r8);
+        self.a = self.a | self.get_r8_register(r8.into());
         if self.a == 0 { self.flags.zero = 0 }
         self.flags.n = 0;
         self.flags.h = 0;
@@ -487,7 +585,7 @@ impl Chip {
 
     //Subtract value in r8 from A, but don't store the result, only set flags
     fn cp_a_r8(&mut self, r8: u8) {
-        let reg_val = self.get_r8_register(r8);
+        let reg_val = self.get_r8_register(r8.into());
         let (half_carry, carry) = self.check_carry_sub_u8(self.a, reg_val);
         let tmp = self.a.wrapping_sub(reg_val);
 
