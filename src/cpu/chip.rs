@@ -2,6 +2,23 @@ use std::fs::File;
 use std::io::Read;
 
 
+enum REGISTER8 {
+    B = 0,
+    C = 1,
+    D = 2,
+    E = 3,
+    H = 4,
+    L = 5,
+    A = 7,
+}
+
+enum REGISTER16 {
+    BC = 0b001,
+    DE = 0b011,
+    HL = 0b101,
+    SP = 0b111,
+}
+
 #[derive(Debug)]
 pub struct Flags {
     pub zero: u8, //Zero flag
@@ -129,10 +146,10 @@ impl Chip {
         // reg b << 8 = 0xca00
         // bitwise OR with reg c results in 0xcafe
         match register_code {
-            0b001 => { (self.b as u16) << 8 | self.c as u16 },
-            0b011 => {  (self.d as u16) << 8 | self.e as u16 },
-            0b101 => {(self.h as u16) << 8 | self.l as u16 },
-            0b111 => { self.sp },
+            (REGISTER16::BC as u8) => { (self.b as u16) << 8 | self.c as u16 },
+            (REGISTER16::DE as u8) => {  (self.d as u16) << 8 | self.e as u16 },
+            (REGISTER16::HL as u8) => {(self.h as u16) << 8 | self.l as u16 },
+            (REGISTER16::SP as u8) => { self.sp },
             _ => { panic!("Cannot get register address: Unknown register code {}", register_code) }
         }
     }
@@ -140,14 +157,14 @@ impl Chip {
 
     fn get_r8_register(&mut self, register_code: u8) -> u8 {
         match register_code {
-            0 => { self.b },
-            1 => { self.c },
-            2 => { self.d },
-            3 => { self.e },
-            4 => { self.h },
-            5 => { self.l },
-            6 => { let memory_address = self.get_r16_register_memory_address(0b101); self.read_memory(memory_address) }, //[HL]
-            7 => { self.a },
+            REGISTER8::B => { self.b },
+            REGISTER8::C => { self.c },
+            REGISTER8::D => { self.d },
+            REGISTER8::E => { self.e },
+            REGISTER8::H => { self.h },
+            REGISTER8::L => { self.l },
+            6 as REGISTER8 => { let memory_address = self.get_r16_register_memory_address(0b101); self.read_memory(memory_address) }, //[HL]
+            REGISTER8::A => { self.a },
             _ => { panic!("Cannot get register code: Unknown register code {}", register_code) }
 
         }
