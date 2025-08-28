@@ -305,6 +305,12 @@ impl Chip {
         let half_carry = ((lhs & 0xf).wrapping_add(rhs & 0xf)) & 0x10 == 0x10;
         return (half_carry, carry);
     }
+    // Return the half-carry and carry of adding two i8s
+    fn check_carry_add_i8(&self, lhs: i8, rhs: i8) -> (bool, bool) {
+        let (_, carry) = lhs.overflowing_add(rhs);
+        let half_carry = ((lhs & 0xf).wrapping_add(rhs & 0xf)) & 0x10 == 0x10;
+        return (half_carry, carry);
+    }
     // Return the half-carry and carry of subtracting two u8s
     fn check_carry_sub_u8(&self, lhs: u8, rhs: u8) -> (bool, bool) {
         let (_, carry) = lhs.overflowing_sub(rhs);
@@ -342,11 +348,11 @@ impl Chip {
             (0b01, dst_r8, src_r8) => { self.ld_r8_r8(src_r8, dst_r8) }, //LD r8, r8
             (0b10, op, r8) => { self.alu_a_r8(op, r8);  }, //ALU A, r8
             (0b11, 0b000..=0b011, 0b000) => { }, //RET condition
-            (0b11, 0b100, 0b000) => { self.ldh_r16_a(oct2) }, //LD (FF00 + u8), A
-            (0b11, 0b101, 0b000) => {  }, //ADD SP, i8
-            (0b11, 0b110, 0b000) => {  }, //LD A, (FF00 + u8)
-            (0b11, 0b111, 0b000) => {  }, //LD HL, SP + i8
-            (0b11, 0b000|0b010|0b100|0b110, 0b001) => {  }, //POP r16
+            (0b11, 0b100, 0b000) => { self.ldh_i16_a() }, //LD (FF00 + u8), A
+            (0b11, 0b101, 0b000) => { self.add_sp_i8() }, //ADD SP, i8
+            (0b11, 0b110, 0b000) => { self.ldh_a_i16() }, //LD A, (FF00 + u8)
+            (0b11, 0b111, 0b000) => { self.ld_hl_sp_imm8() }, //LD HL, SP + i8
+            (0b11, 0b000|0b010|0b100|0b110, 0b001) => { self.pop_r16(oct2) }, //POP r16
             (0b11, 0b001|0b011|0b101|0b111, 0b001) => {  }, //0: RET, 1: RETI, 2: JP HL, 3: LD SP, HL
             (0b11, 0b000..=0b011, 0b010) => {  }, //JP
             (0b11, 0b100, 0b010) => {  }, //LD (FF00 + C), A
@@ -365,6 +371,51 @@ impl Chip {
         self.pc += next;
     }
 
+    // POP address from stack and save to register
+    fn pop_r16(&mut self, r16: u8) {
+        let low = self.read_memory(self.sp);
+        self.sp += 1;
+        let high = self.read_memory(self.sp);
+        self.sp += 1;
+        let value = (((high as u16) << 8) as u16) | (low as u16);
+        self.set_r16_register(r16.into(), value);
+
+    }
+
+    fn ld_hl_sp_imm8(&mut self) {
+        let imm8 = self.byte2;
+        //NOTE: Might be bugged
+        let (half_carry, carry) = self.check_carry_add_i8(self.sp as i8, imm8 as i8);
+        let value = (self.sp as i16).wrapping_add(imm8 as i16);
+        self.set_r16_register(REGISTER16::HL, value as u16);
+        self.flags.zero = 0;
+        self.flags.n = 0;
+        self.flags.h = half_carry as u8;
+        self.flags.carry = carry as u8;
+
+    }
+    // Load value in address ff00 + n8 if in range, then save value in register A
+    fn ldh_a_i16(&mut self) {
+        let address = self.byte2 as u16 + 0xFF00;
+        if address < 0xffff && address > 0xff00 {
+            let value = self.read_memory(address);
+            self.set_r8_register(REGISTER8::A, value);
+        }
+    }
+
+    // Add immediate i8 value to stack pointer, and set hc/carry flags 
+    // appropriately
+    // ADD SP i8
+    fn add_sp_i8(&mut self) {
+        let imm8 = self.byte2;
+        let (half_carry, carry) = self.check_carry_add_i8(self.sp as i8, imm8 as i8);
+        let value = (self.sp as i16).wrapping_add(imm8 as i16);
+        self.set_r16_register(REGISTER16::SP, value as u16);
+        self.flags.zero = 0;
+        self.flags.n = 0;
+        self.flags.h = half_carry as u8;
+        self.flags.carry = carry as u8;
+    }
 
     // Load value from dst_r8 into src_r8. When called as LD r1 r2, this method
     // is called as ld_r8_r8(r2, r1) (Notice the inversion)
@@ -374,11 +425,13 @@ impl Chip {
 
     }
 
-    fn ldh_r16_a(&mut self, memory: u8) {
-        let memory: u16 = 0xFF00 + memory as u16;
-        if memory < 0xffff && memory > 0xff00 {
-            let value = self.get_r8_register(REGISTER8::L);
-            self.write_memory(memory, value);
+    // If n8 + ff00 is in range, store value of register A into memory location n8 + ff00
+    // LDH [n16], A OR LDH [$FF00 + n8], A
+    fn ldh_i16_a(&mut self) {
+        let address: u16 = 0xFF00 + self.byte2 as u16;
+        if address < 0xffff && address > 0xff00 {
+            let value = self.get_r8_register(REGISTER8::A);
+            self.write_memory(address, value);
         }
     }
 
