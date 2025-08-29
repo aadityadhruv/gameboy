@@ -74,6 +74,27 @@ impl From<u8> for REGISTER16MEM {
 }
 
 #[derive(Debug)]
+enum REGISTER16STK {
+    UD = -1,
+    BC = 0,
+    DE = 1,
+    HL = 2,
+    AF = 3,
+}
+
+impl From<u8> for REGISTER16STK {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => REGISTER16STK::BC,
+            1 => REGISTER16STK::DE,
+            2 => REGISTER16STK::HL,
+            3 => REGISTER16STK::AF,
+            _ => REGISTER16STK::UD
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct Flags {
     pub zero: u8, //Zero flag
     pub n: u8, //Subtraction flag (BCD)
@@ -298,6 +319,47 @@ impl Chip {
             _ => { panic!("Cannot get register address: Unknown register code {:?}", register_code) }
         }
     }
+
+
+    // Get the memory address pointed to by a register pair. This is basically the r16stk table
+    // This returns a 16 bit memory address
+    fn get_r16stk_register(&mut self, register_code: REGISTER16STK) -> u16 {
+
+        match register_code {
+            REGISTER16STK::BC => { (self.b as u16) << 8 | self.c as u16 },
+            REGISTER16STK::DE => {  (self.d as u16) << 8 | self.e as u16 },
+            REGISTER16STK::HL => { (self.h as u16) << 8 | self.l as u16 },
+            REGISTER16STK::AF => {
+                // We do this because in reality, the flags are just a single register F, and the bit shift
+                // corresponds to the flag position in the register byte
+                let f = self.flags.zero << 7 | self.flags.n << 6 | self.flags.h << 5 | self.flags.carry << 4;
+                (self.a as u16) << 8 | f as u16
+            },
+            _ => { panic!("Cannot get register address: Unknown register code {:?}", register_code) }
+        }
+    }
+
+    // Set the memory address pointed to by a register pair. This is basically the r16stk table
+    // This returns a 16 bit memory address
+    fn set_r16stk_register(&mut self, register_code: REGISTER16STK, value: u16) {
+        let high = (value >> 8) as u8;
+        let low = (value & 0xff) as u8;
+        match register_code {
+            REGISTER16STK::BC => { self.b = high; self.c = low; },
+            REGISTER16STK::DE => {  self.d = high; self.e = low; },
+            REGISTER16STK::HL => { self.h = high; self.l = low; },
+            REGISTER16STK::AF => {
+                // We do this because in reality, the flags are just a single register F, and the bit shift
+                // corresponds to the flag position in the register byte
+                self.a = high;
+                self.flags.zero = low & 0b10000000;
+                self.flags.n = low & 0b01000000;
+                self.flags.h = low & 0b00100000;
+                self.flags.carry = low & 0b00010000;
+            },
+            _ => { panic!("Cannot get register address: Unknown register code {:?}", register_code) }
+        }
+    }
    
     // Return the half-carry and carry of adding two u8s
     fn check_carry_add_u8(&self, lhs: u8, rhs: u8) -> (bool, bool) {
@@ -355,13 +417,13 @@ impl Chip {
             (0b11, 0b000|0b010|0b100|0b110, 0b001) => { self.pop_r16(oct2) }, //POP r16
             (0b11, 0b001|0b011|0b101|0b111, 0b001) => {  }, //0: RET, 1: RETI, 2: JP HL, 3: LD SP, HL
             (0b11, 0b000..=0b011, 0b010) => {  }, //JP
-            (0b11, 0b100, 0b010) => {  }, //LD (FF00 + C), A
-            (0b11, 0b101, 0b010) => {  }, //LD (u16), A
-            (0b11, 0b110, 0b010) => {  }, //LD A, (FF00 + C)
-            (0b11, 0b111, 0b010) => {  }, //LD A, (u16)
+            (0b11, 0b100, 0b010) => { self.ldh_c_a() }, //LD (FF00 + C), A
+            (0b11, 0b101, 0b010) => { self.ld_n16_a() }, //LD (u16), A
+            (0b11, 0b110, 0b010) => { self.ldh_a_c() }, //LD A, (FF00 + C)
+            (0b11, 0b111, 0b010) => { self.ld_a_n16() }, //LD A, (u16)
             (0b11, opcode, 0b011) => {  }, //0: JP u16, 1: CB prefix, 6: DI, 7: EI
             (0b11, 0b000..=0b011, 0b100) => {  }, //CALL condition
-            (0b11, 0b000|0b010|0b100|0b110, 0b101) => {  }, //PUSH r16
+            (0b11, 0b000|0b010|0b100|0b110, 0b101) => { self.push_r16(oct2) }, //PUSH r16
             (0b11, 0b001, 0b101) => {  }, //CALL u16
             (0b11, opcode, 0b110) => {  }, //ALU a, u8
             (0b11, exp, 0b111) => {  }, //RST
@@ -371,6 +433,45 @@ impl Chip {
         self.pc += next;
     }
 
+
+    // Push to stack
+    fn push_r16(&mut self, r16: u8) {
+        let value = self.get_r16stk_register(r16.into());
+        let high = (value >> 8) as u8;
+        let low = (value & 0xff) as u8;
+        self.sp -= 1;
+        self.write_memory(self.sp, high);
+        self.sp -= 1;
+        self.write_memory(self.sp, low);
+    }
+
+    // Load value in reg A from [n16]
+    fn ld_a_n16(&mut self) {
+        let address = (self.byte2 as u16) << 8 | self.byte3 as u16; 
+        let value = self.read_memory(address);
+        self.set_r8_register(REGISTER8::A, value);
+    }
+    
+    // Load [0xff00 + c] into reg A
+    fn ldh_a_c(&mut self) {
+        let address = 0xff00 + self.get_r8_register(REGISTER8::C) as u16;
+        let value = self.read_memory(address);
+        self.set_r8_register(REGISTER8::A, value);
+    }
+
+    // Load reg A value into memory address byte2 << 8|byte3
+    fn ld_n16_a(&mut self) {
+        let value = self.get_r8_register(REGISTER8::A);
+        let address = (self.byte2 as u16) << 8 | self.byte3 as u16; 
+        self.write_memory(address, value);
+    }
+    // Load value in register A into $ff00 + C
+    fn ldh_c_a(&mut self) {
+        let value = self.get_r8_register(REGISTER8::A);
+        let address = self.get_r8_register(REGISTER8::C);
+        self.write_memory(0xff00 + address as u16, value)
+    }
+
     // POP address from stack and save to register
     fn pop_r16(&mut self, r16: u8) {
         let low = self.read_memory(self.sp);
@@ -378,7 +479,7 @@ impl Chip {
         let high = self.read_memory(self.sp);
         self.sp += 1;
         let value = (((high as u16) << 8) as u16) | (low as u16);
-        self.set_r16_register(r16.into(), value);
+        self.set_r16stk_register(r16.into(), value);
 
     }
 
