@@ -111,6 +111,17 @@ impl Flags {
             carry: 0,
         }
     }
+
+    fn get_cond(&self, cond: u8) -> u16 {
+        match cond {
+            0 => { (self.n as u16) << 8 | self.zero as u16  }
+            1 => { self.zero as u16 }
+            2 => { (self.n as u16) << 8 | self.carry as u16 }
+            3 => { self.carry as u16 }
+            _ => { panic!("Invalid Condition for Flags!") }
+            
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -409,7 +420,7 @@ impl Chip {
             (0b01, 0b110, 0b110) => { self.halt() }, //HALT
             (0b01, dst_r8, src_r8) => { self.ld_r8_r8(src_r8, dst_r8) }, //LD r8, r8
             (0b10, op, r8) => { self.alu_a_r8(op, r8);  }, //ALU A, r8
-            (0b11, 0b000..=0b011, 0b000) => { }, //RET condition
+            (0b11, 0b000..=0b011, 0b000) => { self.ret_cond(oct2) }, //RET condition
             (0b11, 0b100, 0b000) => { self.ldh_i16_a() }, //LD (FF00 + u8), A
             (0b11, 0b101, 0b000) => { self.add_sp_i8() }, //ADD SP, i8
             (0b11, 0b110, 0b000) => { self.ldh_a_i16() }, //LD A, (FF00 + u8)
@@ -433,6 +444,19 @@ impl Chip {
         self.pc += next;
     }
 
+
+    // RETURN based on condition
+    fn ret_cond(&mut self, ret_code: u8) {
+        // If condition true, RET
+        if self.flags.get_cond(ret_code) != 0 {
+            let low = self.read_memory(self.sp);
+            self.sp += 1;
+            let high = self.read_memory(self.sp);
+            self.sp += 1;
+            let value = (((high as u16) << 8) as u16) | (low as u16);
+            self.pc = value;
+        }
+    }
 
     // Push to stack
     fn push_r16(&mut self, r16: u8) {
