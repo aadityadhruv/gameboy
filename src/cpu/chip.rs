@@ -139,6 +139,7 @@ pub struct Chip {
     pub byte2: u8,
     pub byte3: u8,
     pub flags: Flags, //Lower bits of AF, Flags register
+    pub ime: u8, // IME (Interrupt) flag
     pub rom_bank_0: [u8; 16384],
     pub rom_bank_n: [u8; 16384],
     pub external_ram_bank_n: [u8; 8192],
@@ -164,6 +165,7 @@ impl Chip {
             byte2: 0,
             byte3: 0,
             flags: Flags::new(),
+            ime: 0,
             rom_bank_0: [0; 16384],
             rom_bank_n: [0; 16384],
             external_ram_bank_n: [00; 8192],
@@ -401,7 +403,7 @@ impl Chip {
         println!("{:b} {:b} {:b}", oct1, oct2, oct3);
 
         match (oct1, oct2, oct3) {
-            (0b11, 0b001, 0b001) => {  }, //CB-prefixed instructions
+            // (0b11, 0b001, 0b001) => {  }, //CB-prefixed instructions
             (0b00, 0b000, 0b000) => { println!("NOOP") }, //noop
             (0b00, 0b001, 0b000) => { self.ld_u16_sp() }, //LD (u16), SP
             (0b00, 0b010, 0b000) => { println!("STOP") }, //STOP
@@ -426,13 +428,19 @@ impl Chip {
             (0b11, 0b110, 0b000) => { self.ldh_a_i16() }, //LD A, (FF00 + u8)
             (0b11, 0b111, 0b000) => { self.ld_hl_sp_imm8() }, //LD HL, SP + i8
             (0b11, 0b000|0b010|0b100|0b110, 0b001) => { self.pop_r16(oct2) }, //POP r16
-            (0b11, 0b001|0b011|0b101|0b111, 0b001) => {  }, //0: RET, 1: RETI, 2: JP HL, 3: LD SP, HL
-            (0b11, 0b000..=0b011, 0b010) => {  }, //JP
+            (0b11, 0b001, 0b001) => { self.ret() }, // RET
+            (0b11, 0b011, 0b001) => { self.reti() }, // RETI
+            (0b11, 0b101, 0b001) => { self.jp_hl() }, // JP HL
+            (0b11, 0b111, 0b001) => { self.ld_sp_hl() }, // LD SP, HL
+            (0b11, 0b000..=0b011, 0b010) => { self.jp_cond(oct2) }, //JP
             (0b11, 0b100, 0b010) => { self.ldh_c_a() }, //LD (FF00 + C), A
             (0b11, 0b101, 0b010) => { self.ld_n16_a() }, //LD (u16), A
             (0b11, 0b110, 0b010) => { self.ldh_a_c() }, //LD A, (FF00 + C)
             (0b11, 0b111, 0b010) => { self.ld_a_n16() }, //LD A, (u16)
-            (0b11, opcode, 0b011) => {  }, //0: JP u16, 1: CB prefix, 6: DI, 7: EI
+            (0b11, 0b000, 0b011) => { self.jp_u16() }, //JP u16
+            (0b11, 0b001, 0b011) => {  }, //CB prefix
+            (0b11, 0b110, 0b011) => { self.di() }, //DI
+            (0b11, 0b111, 0b011) => { self.ei() }, //EI
             (0b11, 0b000..=0b011, 0b100) => {  }, //CALL condition
             (0b11, 0b000|0b010|0b100|0b110, 0b101) => { self.push_r16(oct2) }, //PUSH r16
             (0b11, 0b001, 0b101) => {  }, //CALL u16
@@ -445,16 +453,58 @@ impl Chip {
     }
 
 
+
+    fn ei(&mut self) {
+        self.ime = 1;
+    }
+    fn di(&mut self) {
+        self.ime = 0;
+    }
+
+    // Jump to address u16
+    fn jp_u16(&mut self) {
+        let address = (self.byte2 as u16) << 8 | self.byte3 as u16; 
+        self.pc = address;
+    }
+
+    // Jump based on condition
+    fn jp_cond(&mut self, cond: u8) {
+        // If condition true, JUMP
+        if self.flags.get_cond(cond) != 0 {
+            self.jp_u16();
+        }
+    }
+
+    // Load value of HL into SP
+    fn ld_sp_hl(&mut self) {
+        self.sp = self.get_r16_register(REGISTER16::SP);
+    }
+    // Jump to address to HL
+    fn jp_hl(&mut self) {
+        self.pc = self.get_r16_register(REGISTER16::HL);
+    }
+
+    // Enable interrupts and RETURN
+    fn reti(&mut self) {
+        // Enable interrupt
+        self.ei();
+        self.ret();
+    }
+
+    // RETURN
+    fn ret(&mut self) {
+        let low = self.read_memory(self.sp);
+        self.sp += 1;
+        let high = self.read_memory(self.sp);
+        self.sp += 1;
+        let value = (((high as u16) << 8) as u16) | (low as u16);
+        self.pc = value;
+    }
     // RETURN based on condition
     fn ret_cond(&mut self, ret_code: u8) {
         // If condition true, RET
         if self.flags.get_cond(ret_code) != 0 {
-            let low = self.read_memory(self.sp);
-            self.sp += 1;
-            let high = self.read_memory(self.sp);
-            self.sp += 1;
-            let value = (((high as u16) << 8) as u16) | (low as u16);
-            self.pc = value;
+            self.ret();
         }
     }
 
