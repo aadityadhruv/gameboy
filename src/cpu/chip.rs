@@ -443,7 +443,7 @@ impl Chip {
             (0b11, 0b111, 0b011) => { self.ei() }, //EI
             (0b11, 0b000..=0b011, 0b100) => {  }, //CALL condition
             (0b11, 0b000|0b010|0b100|0b110, 0b101) => { self.push_r16(oct2) }, //PUSH r16
-            (0b11, 0b001, 0b101) => {  }, //CALL u16
+            (0b11, 0b001, 0b101) => { self.call() }, //CALL u16
             (0b11, opcode, 0b110) => {  }, //ALU a, u8
             (0b11, exp, 0b111) => {  }, //RST
             _ => { println!("Error: 0x{:02X} not implemented!", self.instr); std::process::exit(1); },
@@ -453,6 +453,20 @@ impl Chip {
     }
 
 
+
+    // Save next address onto stack so that RET can pop it later
+    fn call(&mut self) {
+        let address = (self.byte2 as u16) << 8 | self.byte3 as u16; 
+        // PC has already moved onto the next address
+        let high = (self.pc >> 8) as u8;
+        let low = (self.pc & 0xff) as u8;
+        self.sp -= 1;
+        self.write_memory(self.sp, high);
+        self.sp -= 1;
+        self.write_memory(self.sp, low);
+        // JP u16
+        self.pc = address;
+    }
 
     fn ei(&mut self) {
         self.ime = 1;
