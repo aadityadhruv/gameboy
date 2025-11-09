@@ -441,11 +441,11 @@ impl Chip {
             (0b11, 0b001, 0b011) => {  }, //CB prefix
             (0b11, 0b110, 0b011) => { self.di() }, //DI
             (0b11, 0b111, 0b011) => { self.ei() }, //EI
-            (0b11, 0b000..=0b011, 0b100) => {  }, //CALL condition
+            (0b11, 0b000..=0b011, 0b100) => { self.call_cond(oct2) }, //CALL condition
             (0b11, 0b000|0b010|0b100|0b110, 0b101) => { self.push_r16(oct2) }, //PUSH r16
             (0b11, 0b001, 0b101) => { self.call() }, //CALL u16
-            (0b11, opcode, 0b110) => {  }, //ALU a, u8
-            (0b11, exp, 0b111) => {  }, //RST
+            (0b11, opcode, 0b110) => { self.alu_a_u8(opcode) }, //ALU a, u8
+            (0b11, tgt, 0b111) => { self.rst(tgt) }, //RST
             _ => { println!("Error: 0x{:02X} not implemented!", self.instr); std::process::exit(1); },
         }
 
@@ -453,6 +453,43 @@ impl Chip {
     }
 
 
+    //TODO
+    fn rst(&mut self, tgt: u8) {
+        // Target address 0x00exp000
+        let address = (tgt * 8) as u16;
+        // PC has already moved onto the next address
+        let high = (self.pc >> 8) as u8;
+        let low = (self.pc & 0xff) as u8;
+        self.sp -= 1;
+        self.write_memory(self.sp, high);
+        self.sp -= 1;
+        self.write_memory(self.sp, low);
+        // JP u16
+        self.pc = address;
+    }
+
+    //ALU A u8 -> Similar to ALU A r8, but instead of register, use next byte
+    fn alu_a_u8(&mut self, opcode: u8) {
+        let r8 = self.byte2;
+        match opcode {
+            0b000 => { self.add_a_r8(r8) },
+            0b001 => { self.adc_a_r8(r8) },
+            0b010 => { self.sub_a_r8(r8) },
+            0b011 => { self.sbc_a_r8(r8) },
+            0b100 => { self.and_a_r8(r8) },
+            0b101 => { self.xor_a_r8(r8) },
+            0b110 => { self.or_a_r8(r8) },
+            0b111 => { self.cp_a_r8(r8) },
+            _ => { panic!("Invalid ALU A R8 Operation: opcode: {}, register: {}", opcode, r8)}
+        }
+    }
+
+    // CALL if cond met
+    fn call_cond(&mut self, cond: u8) {
+        if self.flags.get_cond(cond) != 0 {
+            self.call()
+        }
+    }
 
     // Save next address onto stack so that RET can pop it later
     fn call(&mut self) {
