@@ -416,13 +416,19 @@ impl Chip {
         let mut next = 0;
 
         println!("{:b}",  self.instr);
+        // Handle CB-prefixed instructions
+        if self.instr == 0xcb {
+            // Move ahead from 0xcb
+            self.pc += next;
+            self.execute_cb();
+            return;
+        }
         let oct1 = (self.instr & 0b11000000) >> 6;
         let oct2 = (self.instr & 0b00111000) >> 3;
         let oct3 = self.instr & 0b00000111;
         println!("{:b} {:b} {:b}", oct1, oct2, oct3);
 
         match (oct1, oct2, oct3) {
-            (0b11, 0b001, 0b001) => {  }, //CB-prefixed instructions
             (0b00, 0b000, 0b000) => { println!("NOOP") }, //noop
             (0b00, 0b001, 0b000) => { self.ld_u16_sp() }, //LD (u16), SP
             (0b00, 0b010, 0b000) => { println!("STOP"); panic!("STOPPING!") }, //STOP
@@ -472,6 +478,31 @@ impl Chip {
     }
 
 
+    // Set nth bit to zero in r8
+    fn res(&mut self, bit: u8, r8: u8) {
+        let mut reg = self.get_r8_register(r8.into());
+        reg = !(1 << bit) & reg;
+        self.set_r8_register(r8.into(), reg);
+    }
+
+    // Set nth bit in r8
+    fn set(&mut self, bit: u8, r8: u8) {
+        let mut reg = self.get_r8_register(r8.into());
+        reg = (1 << bit) | reg;
+        self.set_r8_register(r8.into(), reg);
+    }
+
+    // Test for nth bit value in r8
+    fn bit(&mut self, bit: u8, r8: u8) {
+        let reg = self.get_r8_register(r8.into());
+        // Check nth bit of reg, and if it is zero, set zero flag
+        if ((1 << bit) & reg) >> bit == 0 {
+            self.flags.zero = 1;
+        }
+        self.flags.n = 0;
+        self.flags.h = 1;
+    }
+
     fn shift_rotate(&mut self, opcode: u8, r8: u8) {
         match opcode {
             0b000 => { self.rlc_r8(r8) },
@@ -482,6 +513,7 @@ impl Chip {
             0b101 => { self.sra_r8(r8) },
             0b110 => { self.swap_r8(r8) },
             0b111 => { self.srl_r8(r8) },
+            _ => { panic!("Invalid opcode for shift_rotate: {}", opcode) }
         }
     }
 
@@ -518,6 +550,7 @@ impl Chip {
     fn sra_r8(&mut self, r8: u8) {
         let mut reg = self.get_r8_register(r8.into());
         self.flags.carry = reg & 0b1;
+        // Think of this as signed division by 2
         let bit = reg >> 7;
         reg  = (reg >> 1) | (bit << 7);
         if reg == 0 {
@@ -625,6 +658,7 @@ impl Chip {
             0b111 => { self.cp_a_r8(r8) },
             _ => { panic!("Invalid ALU A R8 Operation: opcode: {}, register: {}", opcode, r8)}
         }
+        self.pc += 1;
     }
 
     // CALL if cond met
@@ -637,6 +671,7 @@ impl Chip {
     // Save next address onto stack so that RET can pop it later
     fn call(&mut self) {
         let address = (self.byte2 as u16) << 8 | self.byte3 as u16; 
+        self.pc += 2;
         // PC has already moved onto the next address
         let high = (self.pc >> 8) as u8;
         let low = (self.pc & 0xff) as u8;
@@ -718,6 +753,7 @@ impl Chip {
         let address = (self.byte2 as u16) << 8 | self.byte3 as u16; 
         let value = self.read_memory(address);
         self.set_r8_register(REGISTER8::A, value);
+        self.pc += 2;
     }
     
     // Load [0xff00 + c] into reg A
@@ -732,6 +768,7 @@ impl Chip {
         let value = self.get_r8_register(REGISTER8::A);
         let address = (self.byte2 as u16) << 8 | self.byte3 as u16; 
         self.write_memory(address, value);
+        self.pc += 2;
     }
     // Load value in register A into $ff00 + C
     fn ldh_c_a(&mut self) {
@@ -761,6 +798,7 @@ impl Chip {
         self.flags.n = 0;
         self.flags.h = half_carry as u8;
         self.flags.carry = carry as u8;
+        self.pc += 1;
 
     }
     // Load value in address ff00 + n8 if in range, then save value in register A
@@ -770,6 +808,7 @@ impl Chip {
             let value = self.read_memory(address);
             self.set_r8_register(REGISTER8::A, value);
         }
+        self.pc += 1;
     }
 
     // Add immediate i8 value to stack pointer, and set hc/carry flags 
@@ -784,6 +823,7 @@ impl Chip {
         self.flags.n = 0;
         self.flags.h = half_carry as u8;
         self.flags.carry = carry as u8;
+        self.pc += 1;
     }
 
     // Load value from dst_r8 into src_r8. When called as LD r1 r2, this method
@@ -802,6 +842,7 @@ impl Chip {
             let value = self.get_r8_register(REGISTER8::A);
             self.write_memory(address, value);
         }
+        self.pc += 1;
     }
 
     //TODO - Respond to interrupt
@@ -853,6 +894,7 @@ impl Chip {
     //Load value  n8 into register r8
     fn ld_r8_n8(&mut self, r8: u8) {
         self.set_r8_register(r8.into(), self.byte2);
+        self.pc += 1;
     }
 
     //Load value pointed in memory by r16 register pair into register A
@@ -887,6 +929,7 @@ impl Chip {
     fn ld_r16_u16(&mut self, register_lookup: u8) {
         let address = (self.byte2 as u16) << 8 | self.byte3 as u16; 
         self.set_r16_register(register_lookup.into(), address);
+        self.pc += 2;
     }
 
     //Conditional Jump
@@ -902,6 +945,8 @@ impl Chip {
         if should_execute {
             let offset: i8 = self.byte2 as i8;
             self.pc = self.pc.wrapping_add_signed(offset.into());
+        } else {
+            self.pc += 1;
         }
     }
 
@@ -916,6 +961,7 @@ impl Chip {
         let address: u16 = (self.byte2 as u16) << 8 | self.byte3 as u16;
         self.write_memory(address, (self.sp & 0xff) as u8);
         self.write_memory(address + 1, (self.sp >> 8) as u8);
+        self.pc += 2;
     }
 
     //All math based operations are processed here
