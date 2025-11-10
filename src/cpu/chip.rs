@@ -393,6 +393,25 @@ impl Chip {
         return (half_carry, carry);
     }
 
+    pub fn execute_cb(&mut self) {
+        let mut next = 0;
+        println!("CB-Prefix: {:b}",  self.instr);
+        let oct1 = (self.instr & 0b11000000) >> 6;
+        let oct2 = (self.instr & 0b00111000) >> 3;
+        let oct3 = self.instr & 0b00000111;
+        println!("{:b} {:b} {:b}", oct1, oct2, oct3);
+
+        match (oct1, oct2, oct3) {
+            (0b00, opcode, r8) => { self.shift_rotate(opcode, r8)  },
+            (0b01, bit, r8) => { self.bit(bit, r8) },
+            (0b10, bit, r8) => { self.res(bit, r8) },
+            (0b11, bit, r8) => { self.set(bit, r8) },
+            _ => { println!("CB-Prefix Error: 0x{:02X} not implemented!", self.instr); std::process::exit(1); },
+        }
+
+        self.pc += next;
+    }
+
     pub fn execute(&mut self) {
         let mut next = 0;
 
@@ -403,10 +422,10 @@ impl Chip {
         println!("{:b} {:b} {:b}", oct1, oct2, oct3);
 
         match (oct1, oct2, oct3) {
-            // (0b11, 0b001, 0b001) => {  }, //CB-prefixed instructions
+            (0b11, 0b001, 0b001) => {  }, //CB-prefixed instructions
             (0b00, 0b000, 0b000) => { println!("NOOP") }, //noop
             (0b00, 0b001, 0b000) => { self.ld_u16_sp() }, //LD (u16), SP
-            (0b00, 0b010, 0b000) => { println!("STOP") }, //STOP
+            (0b00, 0b010, 0b000) => { println!("STOP"); panic!("STOPPING!") }, //STOP
             (0b00, 0b011, 0b000) => { self.jr() }, //JR
             (0b00, 0b100..=0b111, 0b000) => { self.jr_cond(oct2) }, //JR conditonal
             (0b00,0b000|0b010|0b100|0b110, 0b001) => { self.ld_r16_u16(oct2) }, //LD r16, u16
@@ -453,7 +472,131 @@ impl Chip {
     }
 
 
-    //TODO
+    fn shift_rotate(&mut self, opcode: u8, r8: u8) {
+        match opcode {
+            0b000 => { self.rlc_r8(r8) },
+            0b001 => { self.rrc_r8(r8) },
+            0b010 => { self.rl_r8(r8) },
+            0b011 => { self.rr_r8(r8) },
+            0b100 => { self.sla_r8(r8) },
+            0b101 => { self.sra_r8(r8) },
+            0b110 => { self.swap_r8(r8) },
+            0b111 => { self.srl_r8(r8) },
+        }
+    }
+
+
+    // Swap upper 4 bits of r8 with lower 4 bits
+    fn swap_r8(&mut self, r8: u8) {
+        let mut reg = self.get_r8_register(r8.into());
+        let high = (reg >> 4) as u8;
+        let low = (reg & 0x0f) as u8;
+        reg = (low << 4) | high;
+        if reg == 0 {
+            self.flags.zero = reg;
+        }
+        self.flags.n = 0;
+        self.flags.h = 0;
+        self.flags.carry = 0;
+        self.set_r8_register(r8.into(), reg);
+    }
+
+    // Shift r8 right logically
+    fn srl_r8(&mut self, r8: u8) {
+        let mut reg = self.get_r8_register(r8.into());
+        self.flags.carry = reg & 0b1;
+        reg  = reg >> 1;
+        if reg == 0 {
+            self.flags.zero = 1;
+        }
+        self.flags.n = 0;
+        self.flags.h = 0;
+        self.set_r8_register(r8.into(), reg);
+    }
+
+    // Shift r8 right 
+    fn sra_r8(&mut self, r8: u8) {
+        let mut reg = self.get_r8_register(r8.into());
+        self.flags.carry = reg & 0b1;
+        let bit = reg >> 7;
+        reg  = (reg >> 1) | (bit << 7);
+        if reg == 0 {
+            self.flags.zero = 1;
+        }
+        self.flags.n = 0;
+        self.flags.h = 0;
+        self.set_r8_register(r8.into(), reg);
+    }
+
+    // Rotate register r8 right through carry flag (wrapping)
+    fn rr_r8(&mut self, r8: u8) {
+        let mut reg = self.get_r8_register(r8.into());
+        let carry = self.flags.carry;
+        self.flags.carry = reg & 0b1;
+        reg  = (reg >> 1) | (carry << 7);
+        if reg == 0 {
+            self.flags.zero = 1;
+        }
+        self.flags.n = 0;
+        self.flags.h = 0;
+        self.set_r8_register(r8.into(), reg);
+    }
+
+    // Rotate register r8 right
+    fn rrc_r8(&mut self, r8: u8) {
+        let mut reg = self.get_r8_register(r8.into());
+        self.flags.carry = reg & 0b1;
+        // Move bit 0 to bit 7, since bit carry is bit 0
+        reg  = (reg >> 1) | (self.flags.carry << 7);
+        if reg == 0 {
+            self.flags.zero = 1;
+        }
+        self.flags.n = 0;
+        self.flags.h = 0;
+        self.set_r8_register(r8.into(), reg);
+    }
+
+    // Shift r8 left
+    fn sla_r8(&mut self, r8: u8) {
+        let mut reg = self.get_r8_register(r8.into());
+        self.flags.carry = reg >> 7;
+        reg = reg << 1;
+        if reg == 0 {
+            self.flags.zero = 1;
+        }
+        self.flags.n = 0;
+        self.flags.h = 0;
+        self.set_r8_register(r8.into(), reg);
+    }
+
+    // Rotate register r8 left through carry flag (wrapping)
+    fn rl_r8(&mut self, r8: u8) {
+        let mut reg = self.get_r8_register(r8.into());
+        let carry = self.flags.carry;
+        self.flags.carry = reg >> 7;
+        reg = (reg << 1) | carry;
+        if reg == 0 {
+            self.flags.zero = 1;
+        }
+        self.flags.n = 0;
+        self.flags.h = 0;
+        self.set_r8_register(r8.into(), reg);
+    }
+
+    // Rotate register r8 left
+    fn rlc_r8(&mut self, r8: u8) {
+        let mut reg = self.get_r8_register(r8.into());
+        self.flags.carry = reg >> 7;
+        // Move bit 7 to bit 0, since carry is now bit7
+        reg = (reg << 1) | self.flags.carry;
+        if reg == 0 {
+            self.flags.zero = 1;
+        }
+        self.flags.n = 0;
+        self.flags.h = 0;
+        self.set_r8_register(r8.into(), reg);
+    }
+
     fn rst(&mut self, tgt: u8) {
         // Target address 0x00exp000
         let address = (tgt * 8) as u16;
