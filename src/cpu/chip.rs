@@ -43,10 +43,10 @@ enum REGISTER16 {
 impl From<u8> for REGISTER16 {
     fn from(value: u8) -> Self {
         match value {
-            0b001 => REGISTER16::BC,
-            0b011 => REGISTER16::DE,
-            0b101 => REGISTER16::HL,
-            0b111 => REGISTER16::SP,
+            0b000 => REGISTER16::BC,
+            0b010 => REGISTER16::DE,
+            0b011 => REGISTER16::HL,
+            0b100 => REGISTER16::SP,
             _ => REGISTER16::UD
         }
     }
@@ -64,10 +64,10 @@ enum REGISTER16MEM {
 impl From<u8> for REGISTER16MEM {
     fn from(value: u8) -> Self {
         match value {
-            0b001 => REGISTER16MEM::BC,
-            0b011 => REGISTER16MEM::DE,
-            0b101 => REGISTER16MEM::HLI,
-            0b111 => REGISTER16MEM::HLD,
+            0b000 => REGISTER16MEM::BC,
+            0b010 => REGISTER16MEM::DE,
+            0b011 => REGISTER16MEM::HLI,
+            0b100 => REGISTER16MEM::HLD,
             _ => REGISTER16MEM::UD
         }
     }
@@ -142,9 +142,12 @@ pub struct Chip {
     pub ime: u8, // IME (Interrupt) flag
     pub rom_bank_0: [u8; 16384],
     pub rom_bank_n: [u8; 16384],
+    pub vram: [u8; 8192],
     pub external_ram_bank_n: [u8; 8192],
     pub wram_bank_0: [u8; 4096],
     pub wram_bank_n: [u8; 4096],
+    pub object_attribute_memory: [u8; 160],
+    pub io_registers: [u8; 128],
     pub rom: Vec<u8>,
 
 }
@@ -168,18 +171,38 @@ impl Chip {
             ime: 0,
             rom_bank_0: [0; 16384],
             rom_bank_n: [0; 16384],
+            vram: [0; 8192],
             external_ram_bank_n: [00; 8192],
             wram_bank_0: [0; 4096],
             wram_bank_n: [0; 4096],
+            object_attribute_memory: [0; 160],
+            io_registers: [0; 128],
             rom: Vec::new(),
         }
+    }
+
+    fn dump(&self) {
+        println!("==========================");
+        println!("Instruction: 0x{:02X}, PC: 0x{:04X}, SP: 0x{:04X}", self.instr, self.pc, self.sp);
+        println!("[Optional] Byte 2 0x{:02X}, Byte 3: 0x{:02X}", self.byte2, self.byte3);
     }
     pub fn load_rom(&mut self, rom_path: &str) {
         let mut rom = File::open(rom_path).unwrap_or_else(|_err| panic!("Valid ROM needed!"));
         rom.read_to_end(&mut self.rom).unwrap_or_else(|_err| panic!("Error reading ROM"));
 
 	for i in 0..self.rom_bank_0.len() {
-            self.rom_bank_0[i] = self.rom.get(i).unwrap().to_owned();
+            let item = self.rom.get(i);
+            match item {
+                Some(byte) => { self.rom_bank_0[i] = byte.to_owned() },
+                None => { return; }
+            }
+        }
+	for i in 0..self.rom_bank_n.len() {
+            let item = self.rom.get(i + self.rom_bank_0.len());
+            match item {
+                Some(byte) => { self.rom_bank_n[i] = byte.to_owned() },
+                None => { return; }
+            }
         }
         self.pc = 0x0100;
     }
@@ -192,8 +215,8 @@ impl Chip {
     /// * `value` - Value to write to address
     pub fn write_memory(&mut self, address: u16, value: u8) {
         match address {
-            0x0000..=0x3fff => { println!("Writing: ROM Bank 0"); self.rom_bank_0[address as usize] = value  }, //Fixed bank, rom_bank_0
-            0x4000..=0x7fff => { println!("Writing: ROM Bank 1"); self.rom_bank_n[address as usize - 0x4000] = value },
+            0x0000..=0x3fff => { println!("Writing: ROM Bank 0: 0x{:04X}", address); self.rom_bank_0[address as usize] = value  }, //Fixed bank, rom_bank_0
+            0x4000..=0x7fff => { println!("Writing: ROM Bank 1: 0x{:04X}", address); self.rom_bank_n[address as usize - 0x4000] = value },
             0x8000..=0x9fff => {  },
             0xa000..=0xbfff => {  },
             0xc000..=0xcfff => {  },
@@ -213,8 +236,8 @@ impl Chip {
     ///
     pub fn read_memory(&self, address: u16) -> u8 {
         let address = match address {
-            0x0000..=0x3fff => { println!("ROM Bank 0"); self.rom_bank_0[address as usize]  }, //Fixed bank, rom_bank_0
-            0x4000..=0x7fff => { println!("ROM Bank 1"); self.rom_bank_n[address as usize - 0x4000] },
+            0x0000..=0x3fff => { println!("Reading ROM Bank 0: 0x{:04X}", address); self.rom_bank_0[address as usize]  }, //Fixed bank, rom_bank_0
+            0x4000..=0x7fff => { println!("Reading ROM Bank 1: 0x{:04X}", address); self.rom_bank_n[address as usize - 0x4000] },
             0x8000..=0x9fff => { 0x0 },
             0xa000..=0xbfff => { 0x0 },
             0xc000..=0xcfff => { 0x0 },
@@ -233,9 +256,9 @@ impl Chip {
         let arg2 = self.read_memory(self.pc + 2);
         self.byte2 = arg1;
         self.byte3 = arg2;
-        println!("Instr: 0x{:02X}", self.instr);
+        self.dump();
         self.pc += 1;
-        println!("0x{:02X?}", &self.rom_bank_0[self.pc as usize..(self.pc + 10) as usize]);
+        //println!("0x{:02X?}", &self.rom_bank_0[self.pc as usize..(self.pc + 10) as usize]);
     }
 
 
@@ -394,12 +417,11 @@ impl Chip {
     }
 
     pub fn execute_cb(&mut self) {
-        let mut next = 0;
-        println!("CB-Prefix: {:b}",  self.instr);
+        println!("CB-Prefix: 0x{:02X}",  self.instr);
         let oct1 = (self.instr & 0b11000000) >> 6;
         let oct2 = (self.instr & 0b00111000) >> 3;
         let oct3 = self.instr & 0b00000111;
-        println!("{:b} {:b} {:b}", oct1, oct2, oct3);
+        println!("Octets: 0b{:03b} 0b{:03b} 0b{:03b}", oct1, oct2, oct3);
 
         match (oct1, oct2, oct3) {
             (0b00, opcode, r8) => { self.shift_rotate(opcode, r8)  },
@@ -408,73 +430,67 @@ impl Chip {
             (0b11, bit, r8) => { self.set(bit, r8) },
             _ => { println!("CB-Prefix Error: 0x{:02X} not implemented!", self.instr); std::process::exit(1); },
         }
-
-        self.pc += next;
     }
 
     pub fn execute(&mut self) {
-        let mut next = 0;
-
-        println!("{:b}",  self.instr);
+        // println!("{:b}",  self.instr);
         // Handle CB-prefixed instructions
         if self.instr == 0xcb {
             // Move ahead from 0xcb
-            self.pc += next;
+            self.pc += 1;
             self.execute_cb();
             return;
         }
         let oct1 = (self.instr & 0b11000000) >> 6;
         let oct2 = (self.instr & 0b00111000) >> 3;
         let oct3 = self.instr & 0b00000111;
-        println!("{:b} {:b} {:b}", oct1, oct2, oct3);
+         println!("Octets: 0b{:03b} 0b{:03b} 0b{:03b}", oct1, oct2, oct3);
 
         match (oct1, oct2, oct3) {
             (0b00, 0b000, 0b000) => { println!("NOOP") }, //noop
-            (0b00, 0b001, 0b000) => { self.ld_u16_sp() }, //LD (u16), SP
+            (0b00, 0b001, 0b000) => { println!("ld_u16_sp"); self.ld_u16_sp() }, //LD (u16), SP
             (0b00, 0b010, 0b000) => { println!("STOP"); panic!("STOPPING!") }, //STOP
-            (0b00, 0b011, 0b000) => { self.jr() }, //JR
-            (0b00, 0b100..=0b111, 0b000) => { self.jr_cond(oct2) }, //JR conditonal
-            (0b00,0b000|0b010|0b100|0b110, 0b001) => { self.ld_r16_u16(oct2) }, //LD r16, u16
-            (0b00,0b001|0b011|0b101|0b111, 0b001) => { self.add_hl_r16(oct2) }, //ADD HL, r16
-            (0b00,0b000|0b010|0b100|0b110, 0b010) => { self.ld_r16_addr_a(oct2) }, //LD (r16), A
-            (0b00,0b001|0b011|0b101|0b111, 0b010) => { self.ld_a_r16_addr(oct2) }, //LD A, (r16)
-            (0b00,0b000|0b010|0b100|0b110, 0b011) => { self.inc_r16(oct2) }, //INC r16
-            (0b00,0b001|0b011|0b101|0b111, 0b011) => { self.dec_r16(oct2) }, //DEC r16
-            (0b00, r8, 0b100) => { self.inc_r8(r8) }, //INC r8
-            (0b00, r8, 0b101) => { self.dec_r8(r8) }, //DEC r8
-            (0b00, r8, 0b110) => { self.ld_r8_n8(r8) }, //LD r8, u8
-            (0b00, opcode, 0b111) => { self.special_opcodes(opcode) }, //Opcode grp 1
-            (0b01, 0b110, 0b110) => { self.halt() }, //HALT
-            (0b01, dst_r8, src_r8) => { self.ld_r8_r8(src_r8, dst_r8) }, //LD r8, r8
-            (0b10, op, r8) => { self.alu_a_r8(op, r8);  }, //ALU A, r8
-            (0b11, 0b000..=0b011, 0b000) => { self.ret_cond(oct2) }, //RET condition
-            (0b11, 0b100, 0b000) => { self.ldh_i16_a() }, //LD (FF00 + u8), A
-            (0b11, 0b101, 0b000) => { self.add_sp_i8() }, //ADD SP, i8
-            (0b11, 0b110, 0b000) => { self.ldh_a_i16() }, //LD A, (FF00 + u8)
-            (0b11, 0b111, 0b000) => { self.ld_hl_sp_imm8() }, //LD HL, SP + i8
-            (0b11, 0b000|0b010|0b100|0b110, 0b001) => { self.pop_r16(oct2) }, //POP r16
-            (0b11, 0b001, 0b001) => { self.ret() }, // RET
-            (0b11, 0b011, 0b001) => { self.reti() }, // RETI
-            (0b11, 0b101, 0b001) => { self.jp_hl() }, // JP HL
-            (0b11, 0b111, 0b001) => { self.ld_sp_hl() }, // LD SP, HL
-            (0b11, 0b000..=0b011, 0b010) => { self.jp_cond(oct2) }, //JP
-            (0b11, 0b100, 0b010) => { self.ldh_c_a() }, //LD (FF00 + C), A
-            (0b11, 0b101, 0b010) => { self.ld_n16_a() }, //LD (u16), A
-            (0b11, 0b110, 0b010) => { self.ldh_a_c() }, //LD A, (FF00 + C)
-            (0b11, 0b111, 0b010) => { self.ld_a_n16() }, //LD A, (u16)
-            (0b11, 0b000, 0b011) => { self.jp_u16() }, //JP u16
+            (0b00, 0b011, 0b000) => { println!("jr"); self.jr() }, //JR
+            (0b00, 0b100..=0b111, 0b000) => { println!("jr_cond"); self.jr_cond(oct2) }, //JR conditonal
+            (0b00,0b000|0b010|0b100|0b110, 0b001) => { println!("ld_r16_u16"); self.ld_r16_u16(oct2) }, //LD r16, u16
+            (0b00,0b001|0b011|0b101|0b111, 0b001) => { println!("add_hl_r16"); self.add_hl_r16(oct2) }, //ADD HL, r16
+            (0b00,0b000|0b010|0b100|0b110, 0b010) => { println!("ld_r16_addr_a"); self.ld_r16_addr_a(oct2) }, //LD (r16), A
+            (0b00,0b001|0b011|0b101|0b111, 0b010) => { println!("ld_a_r16_addr"); self.ld_a_r16_addr(oct2) }, //LD A, (r16)
+            (0b00,0b000|0b010|0b100|0b110, 0b011) => { println!("inc_r16"); self.inc_r16(oct2) }, //INC r16
+            (0b00,0b001|0b011|0b101|0b111, 0b011) => { println!("dec_r16"); self.dec_r16(oct2) }, //DEC r16
+            (0b00, r8, 0b100) => { println!("inc_r8"); self.inc_r8(r8) }, //INC r8
+            (0b00, r8, 0b101) => { println!("dec_r8"); self.dec_r8(r8) }, //DEC r8
+            (0b00, r8, 0b110) => { println!("ld_r8_n8"); self.ld_r8_n8(r8) }, //LD r8, u8
+            (0b00, opcode, 0b111) => { println!("special_opcodes"); self.special_opcodes(opcode) }, //Opcode grp 1
+            (0b01, 0b110, 0b110) => { println!("halt"); self.halt() }, //HALT
+            (0b01, dst_r8, src_r8) => { println!("ld_r8_r8"); self.ld_r8_r8(src_r8, dst_r8) }, //LD r8, r8
+            (0b10, op, r8) => { println!("alu_a_r8"); self.alu_a_r8(op, r8);  }, //ALU A, r8
+            (0b11, 0b000..=0b011, 0b000) => { println!("ret_cond"); self.ret_cond(oct2) }, //RET condition
+            (0b11, 0b100, 0b000) => { println!("ldh_i16_a"); self.ldh_i16_a() }, //LD (FF00 + u8), A
+            (0b11, 0b101, 0b000) => { println!("add_sp_i8"); self.add_sp_i8() }, //ADD SP, i8
+            (0b11, 0b110, 0b000) => { println!("ldh_a_i16"); self.ldh_a_i16() }, //LD A, (FF00 + u8)
+            (0b11, 0b111, 0b000) => { println!("ld_hl_sp_imm8"); self.ld_hl_sp_imm8() }, //LD HL, SP + i8
+            (0b11, 0b000|0b010|0b100|0b110, 0b001) => { println!("pop_r16"); self.pop_r16(oct2) }, //POP r16
+            (0b11, 0b001, 0b001) => { println!("ret"); self.ret() }, // RET
+            (0b11, 0b011, 0b001) => { println!("reti"); self.reti() }, // RETI
+            (0b11, 0b101, 0b001) => { println!("jp_hl"); self.jp_hl() }, // JP HL
+            (0b11, 0b111, 0b001) => { println!("ld_sp_hl"); self.ld_sp_hl() }, // LD SP, HL
+            (0b11, 0b000..=0b011, 0b010) => { println!("jp_cond"); self.jp_cond(oct2) }, //JP
+            (0b11, 0b100, 0b010) => { println!("ldh_c_a"); self.ldh_c_a() }, //LD (FF00 + C), A
+            (0b11, 0b101, 0b010) => { println!("ld_n16_a"); self.ld_n16_a() }, //LD (u16), A
+            (0b11, 0b110, 0b010) => { println!("ldh_a_c"); self.ldh_a_c() }, //LD A, (FF00 + C)
+            (0b11, 0b111, 0b010) => { println!("ld_a_n16"); self.ld_a_n16() }, //LD A, (u16)
+            (0b11, 0b000, 0b011) => { println!("jp_u16"); self.jp_u16() }, //JP u16
             (0b11, 0b001, 0b011) => {  }, //CB prefix
-            (0b11, 0b110, 0b011) => { self.di() }, //DI
-            (0b11, 0b111, 0b011) => { self.ei() }, //EI
-            (0b11, 0b000..=0b011, 0b100) => { self.call_cond(oct2) }, //CALL condition
-            (0b11, 0b000|0b010|0b100|0b110, 0b101) => { self.push_r16(oct2) }, //PUSH r16
-            (0b11, 0b001, 0b101) => { self.call() }, //CALL u16
-            (0b11, opcode, 0b110) => { self.alu_a_u8(opcode) }, //ALU a, u8
-            (0b11, tgt, 0b111) => { self.rst(tgt) }, //RST
+            (0b11, 0b110, 0b011) => { println!("di"); self.di() }, //DI
+            (0b11, 0b111, 0b011) => { println!("ei"); self.ei() }, //EI
+            (0b11, 0b000..=0b011, 0b100) => { println!("call_cond"); self.call_cond(oct2) }, //CALL condition
+            (0b11, 0b000|0b010|0b100|0b110, 0b101) => { println!("push_r16"); self.push_r16(oct2) }, //PUSH r16
+            (0b11, 0b001, 0b101) => { println!("call"); self.call() }, //CALL u16
+            (0b11, opcode, 0b110) => { println!("alu_a_u8"); self.alu_a_u8(opcode) }, //ALU a, u8
+            (0b11, tgt, 0b111) => { println!("rst"); self.rst(tgt) }, //RST
             _ => { println!("Error: 0x{:02X} not implemented!", self.instr); std::process::exit(1); },
         }
-
-        self.pc += next;
     }
 
 
@@ -847,12 +863,63 @@ impl Chip {
 
     //TODO - Respond to interrupt
     fn halt(&mut self) {
+        panic!("HALT")
 
     }
 
     //TODO
     fn special_opcodes(&mut self, opcode: u8) {
+        match opcode {
+            0 => { self.rlca() },
+            1 => { self.rrca() },
+            2 => { self.rla() },
+            3 => { self.rra() },
+            4 => { self.daa() },
+            5 => { self.cpl() },
+            6 => { self.scf() },
+            7 => { self.ccf() },
+            _ => { panic!("Invalid opcode for special group: {:02X}", opcode);
+            }
+        }
     }
+
+    fn rlca(&mut self) {
+        let reg_code_a = 7;
+        self.rlc_r8(reg_code_a.into());
+    }
+
+    fn rrca(&mut self) {
+        let reg_code_a = 7;
+        self.rrc_r8(reg_code_a.into());
+    }
+
+    fn rla(&mut self) {
+        let reg_code_a = 7;
+        self.rl_r8(reg_code_a.into());
+    }
+
+    fn rra(&mut self) {
+        let reg_code_a = 7;
+        self.rr_r8(reg_code_a.into());
+    }
+
+    fn daa(&mut self) {
+        panic!("TODO")
+    }
+    fn cpl(&mut self) {
+        let reg_code_a = 7;
+        let mut reg = self.get_r8_register(reg_code_a.into());
+        reg = !reg;
+        self.set_r8_register(reg_code_a.into(), reg);
+    }
+    fn scf(&mut self) {
+        panic!("TODO")
+    }
+    fn ccf(&mut self) {
+        panic!("TODO")
+    }
+
+
 
 
     //Increment value in register r8 by 1
