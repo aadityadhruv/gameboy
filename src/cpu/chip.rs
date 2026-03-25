@@ -54,11 +54,12 @@ impl From<u8> for REGISTER16 {
 
 #[derive(Debug)]
 enum REGISTER16MEM {
+    // oct2 == 0b000|0b010|0b100|0b110 in ld_r16_addr_a(oct2)
     UD = -1,
-    BC = 0b001,
-    DE = 0b011,
-    HLI = 0b101, //HL+
-    HLD = 0b111, //HL-
+    BC = 0b000,
+    DE = 0b010,
+    HLI = 0b100, //HL+
+    HLD = 0b110, //HL-
 }
 
 impl From<u8> for REGISTER16MEM {
@@ -66,8 +67,8 @@ impl From<u8> for REGISTER16MEM {
         match value {
             0b000 => REGISTER16MEM::BC,
             0b010 => REGISTER16MEM::DE,
-            0b011 => REGISTER16MEM::HLI,
-            0b100 => REGISTER16MEM::HLD,
+            0b100 => REGISTER16MEM::HLI,
+            0b110 => REGISTER16MEM::HLD,
             _ => REGISTER16MEM::UD
         }
     }
@@ -343,12 +344,12 @@ impl Chip {
             REGISTER16MEM::DE => {  (self.d as u16) << 8 | self.e as u16 },
             REGISTER16MEM::HLI => {
                 let hl = (self.h as u16) << 8 | self.l as u16; //Get current HL value
-                self.set_r16_register(REGISTER16::HL, hl+1); //Increment HL value and set it back to HL (ptr++)
+                self.set_r16_register(REGISTER16::HL, hl.wrapping_add(1)); //Increment HL value and set it back to HL (ptr++)
                 hl //Return HL
             },
             REGISTER16MEM::HLD => {
                 let hl = (self.h as u16) << 8 | self.l as u16; //Get current HL value
-                self.set_r16_register(REGISTER16::HL, hl-1); //Decrement HL value and set it back to HL (ptr--)
+                self.set_r16_register(REGISTER16::HL, hl.wrapping_sub(1)); //Decrement HL value and set it back to HL (ptr--)
                 hl //Return HL
             },
             _ => { panic!("Cannot get register address: Unknown register code {:?}", register_code) }
