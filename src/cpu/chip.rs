@@ -1046,7 +1046,10 @@ impl Chip {
             let offset: i8 = self.byte2 as i8;
             self.pc = self.pc.wrapping_add_signed(offset.into());
         } else {
+            // Skip byte2 which contains jump address
             self.pc += 1;
+            // Fetch next instruction
+            self.next(1);
         }
     }
 
