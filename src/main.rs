@@ -5,7 +5,7 @@ mod cpu;
 #[command(author, version, about, long_about = None)]
 struct Args {
     // Name of the ROM file
-    #[arg(short, long)]
+    #[arg(name = "ROM")]
     name: String,
 }
 
