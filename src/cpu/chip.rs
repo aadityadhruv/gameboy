@@ -670,17 +670,17 @@ impl Chip {
 
     //ALU A u8 -> Similar to ALU A r8, but instead of register, use next byte
     fn alu_a_u8(&mut self, opcode: u8) {
-        let r8 = self.byte2;
+        let value = self.byte2;
         match opcode {
-            0b000 => { self.add_a_r8(r8) },
-            0b001 => { self.adc_a_r8(r8) },
-            0b010 => { self.sub_a_r8(r8) },
-            0b011 => { self.sbc_a_r8(r8) },
-            0b100 => { self.and_a_r8(r8) },
-            0b101 => { self.xor_a_r8(r8) },
-            0b110 => { self.or_a_r8(r8) },
-            0b111 => { self.cp_a_r8(r8) },
-            _ => { panic!("Invalid ALU A R8 Operation: opcode: {}, register: {}", opcode, r8)}
+            0b000 => { self.add_a_u8(value) },
+            0b001 => { self.adc_a_u8(value) },
+            0b010 => { self.sub_a_u8(value) },
+            0b011 => { self.sbc_a_u8(value) },
+            0b100 => { self.and_a_u8(value) },
+            0b101 => { self.xor_a_u8(value) },
+            0b110 => { self.or_a_u8(value) },
+            0b111 => { self.cp_a_u8(value) },
+            _ => { panic!("Invalid ALU A R8 Operation: opcode: {}, value: {}", opcode, value)}
         }
         self.pc += 1;
         self.next(1);
@@ -708,10 +708,12 @@ impl Chip {
         self.pc = address;
     }
 
+    // enable interrupts
     fn ei(&mut self) {
         self.ime = 1;
         self.next(1);
     }
+    // disable interrupts, ime flag controls that
     fn di(&mut self) {
         self.ime = 0;
         self.next(1);
@@ -1070,33 +1072,33 @@ impl Chip {
 
     //All math based operations are processed here
     fn alu_a_r8(&mut self, opcode: u8, r8: u8) {
+        let value = self.get_r8_register(r8.into());
         match opcode {
-            0b000 => { println!("add_a_r8"); self.add_a_r8(r8) },
-            0b001 => { println!("adc_a_r8"); self.adc_a_r8(r8) },
-            0b010 => { println!("sub_a_r8"); self.sub_a_r8(r8) },
-            0b011 => { println!("sbc_a_r8"); self.sbc_a_r8(r8) },
-            0b100 => { println!("and_a_r8"); self.and_a_r8(r8) },
-            0b101 => { println!("xor_a_r8"); self.xor_a_r8(r8) },
-            0b110 => { println!("or_a_r8"); self.or_a_r8(r8) },
-            0b111 => { println!("cp_a_r8"); self.cp_a_r8(r8) },
+            0b000 => { println!("add_a_r8"); self.add_a_u8(value) },
+            0b001 => { println!("adc_a_r8"); self.adc_a_u8(value) },
+            0b010 => { println!("sub_a_r8"); self.sub_a_u8(value) },
+            0b011 => { println!("sbc_a_r8"); self.sbc_a_u8(value) },
+            0b100 => { println!("and_a_r8"); self.and_a_u8(value) },
+            0b101 => { println!("xor_a_r8"); self.xor_a_u8(value) },
+            0b110 => { println!("or_a_r8"); self.or_a_u8(value) },
+            0b111 => { println!("cp_a_r8"); self.cp_a_u8(value) },
             _ => { panic!("Invalid ALU A R8 Operation: opcode: {}, register: {}", opcode, r8)}
         }
         self.next(1);
     }
 
-    //Add the value in r8 to the a register
-    fn add_a_r8(&mut self, r8: u8) {
-        let reg_val = self.get_r8_register(r8.into());
-        let (half_carry, carry) = self.check_carry_add_u8(self.a, reg_val);
-        self.a = self.a.wrapping_add(reg_val);
+    //Add the value to the a register
+    fn add_a_u8(&mut self, value: u8) {
+        let (half_carry, carry) = self.check_carry_add_u8(self.a, value);
+        self.a = self.a.wrapping_add(value);
         if half_carry { self.flags.h = 1 }
         if carry { self.flags.carry = 1 }
         if self.a == 0 { self.flags.zero = 0 }
         self.flags.n = 0;
     }
-    //Add the value in r8 to the a register, along with the value of the carry flag
-    fn adc_a_r8(&mut self, r8: u8) {
-        let sum = self.get_r8_register(r8.into()).wrapping_add(self.flags.carry);
+    //Add the value to the a register, along with the value of the carry flag
+    fn adc_a_u8(&mut self, value: u8) {
+        let sum = value.wrapping_add(self.flags.carry);
         let (half_carry, carry) = self.check_carry_add_u8(self.a, sum);
         self.a = self.a.wrapping_add(sum);
 
@@ -1106,20 +1108,19 @@ impl Chip {
         self.flags.n = 0;
 
     }
-    //Sub the value in r8 from the a register
-    fn sub_a_r8(&mut self, r8: u8) {
-        let reg_val = self.get_r8_register(r8.into());
-        let (half_carry, carry) = self.check_carry_sub_u8(self.a, reg_val);
-        self.a = self.a.wrapping_sub(reg_val);
+    //Sub the value from the a register
+    fn sub_a_u8(&mut self, value: u8) {
+        let (half_carry, carry) = self.check_carry_sub_u8(self.a, value);
+        self.a = self.a.wrapping_sub(value);
 
         if half_carry { self.flags.h = 1 }
         if carry { self.flags.carry = 1 }
         if self.a == 0 { self.flags.zero = 0 }
         self.flags.n = 1;
     }
-    //Sub the value in r8 from the a register along with the value of the carry flag
-    fn sbc_a_r8(&mut self, r8: u8) {
-        let sum = self.get_r8_register(r8.into()).wrapping_add(self.flags.carry);
+    //Sub the value from the a register along with the value of the carry flag
+    fn sbc_a_u8(&mut self, value: u8) {
+        let sum = value.wrapping_add(self.flags.carry);
         let (half_carry, carry) = self.check_carry_sub_u8(self.a, sum);
         self.a = self.a.wrapping_sub(sum);
 
@@ -1129,38 +1130,37 @@ impl Chip {
         self.flags.n = 1;
     }
 
-    //Bitwise AND between r8 value and A
-    fn and_a_r8(&mut self, r8: u8) {
-        self.a = self.a & self.get_r8_register(r8.into());
+    //Bitwise AND between value and A
+    fn and_a_u8(&mut self, value: u8) {
+        self.a = self.a & value;
         if self.a == 0 { self.flags.zero = 0 }
         self.flags.n = 0;
         self.flags.h = 1;
         self.flags.carry = 0;
     }
 
-    //Bitwise XOR between r8 value and A
-    fn xor_a_r8(&mut self, r8: u8) {
-        self.a = self.a ^ self.get_r8_register(r8.into());
+    //Bitwise XOR between value and A
+    fn xor_a_u8(&mut self, value: u8) {
+        self.a = self.a ^ value;
         if self.a == 0 { self.flags.zero = 0 }
         self.flags.n = 0;
         self.flags.h = 0;
         self.flags.carry = 0;
     }
 
-    //Bitwise OR between r8 value and A
-    fn or_a_r8(&mut self, r8: u8) {
-        self.a = self.a | self.get_r8_register(r8.into());
+    //Bitwise OR between value and A
+    fn or_a_u8(&mut self, value: u8) {
+        self.a = self.a | value;
         if self.a == 0 { self.flags.zero = 0 }
         self.flags.n = 0;
         self.flags.h = 0;
         self.flags.carry = 0;
     }
 
-    //Subtract value in r8 from A, but don't store the result, only set flags
-    fn cp_a_r8(&mut self, r8: u8) {
-        let reg_val = self.get_r8_register(r8.into());
-        let (half_carry, carry) = self.check_carry_sub_u8(self.a, reg_val);
-        let tmp = self.a.wrapping_sub(reg_val);
+    //Subtract value from A, but don't store the result, only set flags
+    fn cp_a_u8(&mut self, value: u8) {
+        let (half_carry, carry) = self.check_carry_sub_u8(self.a, value);
+        let tmp = self.a.wrapping_sub(value);
 
         if half_carry { self.flags.h = 1 }
         if carry { self.flags.carry = 1 }
