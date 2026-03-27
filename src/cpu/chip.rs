@@ -34,19 +34,19 @@ impl From<u8> for REGISTER8 {
 #[derive(Debug)]
 enum REGISTER16 {
     UD = -1,
-    BC = 0b001,
-    DE = 0b011,
-    HL = 0b101,
-    SP = 0b111,
+    BC = 0b00,
+    DE = 0b01,
+    HL = 0b10,
+    SP = 0b11,
 }
 
 impl From<u8> for REGISTER16 {
     fn from(value: u8) -> Self {
         match value {
-            0b000 => REGISTER16::BC,
-            0b010 => REGISTER16::DE,
-            0b011 => REGISTER16::HL,
-            0b100 => REGISTER16::SP,
+            0b00 => REGISTER16::BC,
+            0b01 => REGISTER16::DE,
+            0b10 => REGISTER16::HL,
+            0b11 => REGISTER16::SP,
             _ => REGISTER16::UD
         }
     }
@@ -56,19 +56,19 @@ impl From<u8> for REGISTER16 {
 enum REGISTER16MEM {
     // oct2 == 0b000|0b010|0b100|0b110 in ld_r16_addr_a(oct2)
     UD = -1,
-    BC = 0b000,
-    DE = 0b010,
-    HLI = 0b100, //HL+
-    HLD = 0b110, //HL-
+    BC = 0b00,
+    DE = 0b01,
+    HLI = 0b10, //HL+
+    HLD = 0b11, //HL-
 }
 
 impl From<u8> for REGISTER16MEM {
     fn from(value: u8) -> Self {
         match value {
-            0b000 => REGISTER16MEM::BC,
-            0b010 => REGISTER16MEM::DE,
-            0b100 => REGISTER16MEM::HLI,
-            0b110 => REGISTER16MEM::HLD,
+            0b00 => REGISTER16MEM::BC,
+            0b01 => REGISTER16MEM::DE,
+            0b10 => REGISTER16MEM::HLI,
+            0b11 => REGISTER16MEM::HLD,
             _ => REGISTER16MEM::UD
         }
     }
@@ -452,12 +452,12 @@ impl Chip {
             (0b00, 0b010, 0b000) => { println!("STOP"); panic!("STOPPING!") }, //STOP
             (0b00, 0b011, 0b000) => { println!("jr"); self.jr() }, //JR
             (0b00, 0b100..=0b111, 0b000) => { println!("jr_cond"); self.jr_cond(oct2) }, //JR conditonal
-            (0b00,0b000|0b010|0b100|0b110, 0b001) => { println!("ld_r16_u16"); self.ld_r16_u16(oct2) }, //LD r16, u16
-            (0b00,0b001|0b011|0b101|0b111, 0b001) => { println!("add_hl_r16"); self.add_hl_r16(oct2) }, //ADD HL, r16
-            (0b00,0b000|0b010|0b100|0b110, 0b010) => { println!("ld_r16_addr_a"); self.ld_r16_addr_a(oct2) }, //LD (r16), A
-            (0b00,0b001|0b011|0b101|0b111, 0b010) => { println!("ld_a_r16_addr"); self.ld_a_r16_addr(oct2) }, //LD A, (r16)
-            (0b00,0b000|0b010|0b100|0b110, 0b011) => { println!("inc_r16"); self.inc_r16(oct2) }, //INC r16
-            (0b00,0b001|0b011|0b101|0b111, 0b011) => { println!("dec_r16"); self.dec_r16(oct2) }, //DEC r16
+            (0b00,0b000|0b010|0b100|0b110, 0b001) => { println!("ld_r16_u16"); self.ld_r16_u16(oct2 >> 1) }, //LD r16, u16
+            (0b00,0b001|0b011|0b101|0b111, 0b001) => { println!("add_hl_r16"); self.add_hl_r16(oct2 >> 1) }, //ADD HL, r16
+            (0b00,0b000|0b010|0b100|0b110, 0b010) => { println!("ld_r16_addr_a"); self.ld_r16_addr_a(oct2 >> 1) }, //LD (r16), A
+            (0b00,0b001|0b011|0b101|0b111, 0b010) => { println!("ld_a_r16_addr"); self.ld_a_r16_addr(oct2 >> 1) }, //LD A, (r16)
+            (0b00,0b000|0b010|0b100|0b110, 0b011) => { println!("inc_r16"); self.inc_r16(oct2 >> 1) }, //INC r16
+            (0b00,0b001|0b011|0b101|0b111, 0b011) => { println!("dec_r16"); self.dec_r16(oct2 >> 1) }, //DEC r16
             (0b00, r8, 0b100) => { println!("inc_r8"); self.inc_r8(r8) }, //INC r8
             (0b00, r8, 0b101) => { println!("dec_r8"); self.dec_r8(r8) }, //DEC r8
             (0b00, r8, 0b110) => { println!("ld_r8_n8"); self.ld_r8_n8(r8) }, //LD r8, u8
@@ -470,7 +470,7 @@ impl Chip {
             (0b11, 0b101, 0b000) => { println!("add_sp_i8"); self.add_sp_i8() }, //ADD SP, i8
             (0b11, 0b110, 0b000) => { println!("ldh_a_i16"); self.ldh_a_i16() }, //LD A, (FF00 + u8)
             (0b11, 0b111, 0b000) => { println!("ld_hl_sp_imm8"); self.ld_hl_sp_imm8() }, //LD HL, SP + i8
-            (0b11, 0b000|0b010|0b100|0b110, 0b001) => { println!("pop_r16"); self.pop_r16(oct2) }, //POP r16
+            (0b11, 0b000|0b010|0b100|0b110, 0b001) => { println!("pop_r16"); self.pop_r16(oct2 >> 1) }, //POP r16
             (0b11, 0b001, 0b001) => { println!("ret"); self.ret() }, // RET
             (0b11, 0b011, 0b001) => { println!("reti"); self.reti() }, // RETI
             (0b11, 0b101, 0b001) => { println!("jp_hl"); self.jp_hl() }, // JP HL
@@ -485,7 +485,7 @@ impl Chip {
             (0b11, 0b110, 0b011) => { println!("di"); self.di() }, //DI
             (0b11, 0b111, 0b011) => { println!("ei"); self.ei() }, //EI
             (0b11, 0b000..=0b011, 0b100) => { println!("call_cond"); self.call_cond(oct2) }, //CALL condition
-            (0b11, 0b000|0b010|0b100|0b110, 0b101) => { println!("push_r16"); self.push_r16(oct2) }, //PUSH r16
+            (0b11, 0b000|0b010|0b100|0b110, 0b101) => { println!("push_r16"); self.push_r16(oct2 >> 1) }, //PUSH r16
             (0b11, 0b001, 0b101) => { println!("call"); self.call() }, //CALL u16
             (0b11, opcode, 0b110) => { println!("alu_a_u8"); self.alu_a_u8(opcode) }, //ALU a, u8
             (0b11, tgt, 0b111) => { println!("rst"); self.rst(tgt) }, //RST
@@ -656,8 +656,8 @@ impl Chip {
 
     fn rst(&mut self, tgt: u8) {
         // Target address 0x00exp000
-        let address = (tgt * 8) as u16;
-        // PC has already moved onto the next address
+        let address = (tgt << 3) as u16;
+        self.pc += 1;
         let high = (self.pc >> 8) as u8;
         let low = (self.pc & 0xff) as u8;
         self.sp -= 1;
@@ -696,7 +696,7 @@ impl Chip {
     // Save next address onto stack so that RET can pop it later
     fn call(&mut self) {
         let address = (self.byte3 as u16) << 8 | self.byte2 as u16; 
-        self.pc += 2;
+        self.pc += 3;
         // PC has already moved onto the next address
         let high = (self.pc >> 8) as u8;
         let low = (self.pc & 0xff) as u8;
@@ -797,12 +797,13 @@ impl Chip {
         self.next(1);
     }
 
-    // Load reg A value into memory address byte2 << 8|byte3
+    // Load reg A value into memory address byte3 << 8|byte2
     fn ld_n16_a(&mut self) {
         let value = self.get_r8_register(REGISTER8::A);
         let address = (self.byte3 as u16) << 8 | self.byte2 as u16; 
         self.write_memory(address, value);
         self.pc += 2;
+        self.next(1);
     }
     // Load value in register A into $ff00 + C
     fn ldh_c_a(&mut self) {
