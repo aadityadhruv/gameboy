@@ -1,5 +1,5 @@
-use std::fs::File;
-use std::io::Read;
+use super::mmu::MMU;
+
 
 
 #[derive(Debug)]
@@ -126,7 +126,7 @@ impl Flags {
 }
 
 #[derive(Debug)]
-pub struct Chip {
+pub struct CPU {
     pub a: u8, //Upper bits of AF, the Accumulator
     pub b: u8,
     pub c: u8,
@@ -141,21 +141,11 @@ pub struct Chip {
     pub byte3: u8,
     pub flags: Flags, //Lower bits of AF, Flags register
     pub ime: u8, // IME (Interrupt) flag
-    pub rom_bank_0: [u8; 16384],
-    pub rom_bank_n: [u8; 16384],
-    pub vram: [u8; 8192],
-    pub external_ram_bank_n: [u8; 8192],
-    pub wram_bank_0: [u8; 4096],
-    pub wram_bank_n: [u8; 4096],
-    pub object_attribute_memory: [u8; 160],
-    pub io_registers: [u8; 128],
-    pub rom: Vec<u8>,
-
 }
 
-impl Chip {
+impl CPU {
     pub fn new() -> Self {
-        Chip {
+        CPU {
             a: 0,
             b: 0,
             c: 0,
@@ -165,20 +155,11 @@ impl Chip {
             l: 0,
             instr: 0,
             sp: 0,
-            pc: 0,
+            pc: 0x100,
             byte2: 0,
             byte3: 0,
             flags: Flags::new(),
             ime: 0,
-            rom_bank_0: [0; 16384],
-            rom_bank_n: [0; 16384],
-            vram: [0; 8192],
-            external_ram_bank_n: [00; 8192],
-            wram_bank_0: [0; 4096],
-            wram_bank_n: [0; 4096],
-            object_attribute_memory: [0; 160],
-            io_registers: [0; 128],
-            rom: Vec::new(),
         }
     }
 
@@ -186,75 +167,11 @@ impl Chip {
         println!("Instruction: 0x{:02X}, PC: 0x{:04X}, SP: 0x{:04X}", self.instr, self.pc, self.sp);
         println!("[Optional] Byte 2 0x{:02X}, Byte 3: 0x{:02X}", self.byte2, self.byte3);
     }
-    pub fn load_rom(&mut self, rom_path: &str) {
-        let mut rom = File::open(rom_path).unwrap_or_else(|_err| panic!("Valid ROM needed!"));
-        rom.read_to_end(&mut self.rom).unwrap_or_else(|_err| panic!("Error reading ROM"));
-
-	for i in 0..self.rom_bank_0.len() {
-            let item = self.rom.get(i);
-            match item {
-                Some(byte) => { self.rom_bank_0[i] = byte.to_owned() },
-                None => { return; }
-            }
-        }
-	for i in 0..self.rom_bank_n.len() {
-            let item = self.rom.get(i + self.rom_bank_0.len());
-            match item {
-                Some(byte) => { self.rom_bank_n[i] = byte.to_owned() },
-                None => { return; }
-            }
-        }
-        self.pc = 0x0100;
-    }
-    /// Write to memory
-    /// Write a 8 bit value to memory addressed in 16 bits
-    /// The function decides which bank to write to based on the address value
-    /// # Arguments
-    ///
-    /// * `address` - Address to write to
-    /// * `value` - Value to write to address
-    pub fn write_memory(&mut self, address: u16, value: u8) {
-        match address {
-            0x0000..=0x3fff => { println!("Writing: ROM Bank 0: 0x{:04X}", address); self.rom_bank_0[address as usize] = value  }, //Fixed bank, rom_bank_0
-            0x4000..=0x7fff => { println!("Writing: ROM Bank 1: 0x{:04X}", address); self.rom_bank_n[address as usize - 0x4000] = value },
-            0x8000..=0x9fff => {  },
-            0xa000..=0xbfff => {  },
-            0xc000..=0xcfff => {  },
-            0xd000..=0xdfff => {  },
-            0xfe00..=0xfe9f => {  },
-            0xff00..=0xff7f => {  },
-            0xff80..=0xfffe => {  },
-            0xffff..=0xffff => {  },
-            _ => {  }
-        };
-    }
-    /// Read from memory
-    /// Same as write_memory, but read from the correct rom bank instead
-    /// # Arguments
-    ///
-    /// * `address` - 16 bit address to access
-    ///
-    pub fn read_memory(&self, address: u16) -> u8 {
-        let address = match address {
-            0x0000..=0x3fff => { println!("Reading ROM Bank 0: 0x{:04X}", address); self.rom_bank_0[address as usize]  }, //Fixed bank, rom_bank_0
-            0x4000..=0x7fff => { println!("Reading ROM Bank 1: 0x{:04X}", address); self.rom_bank_n[address as usize - 0x4000] },
-            0x8000..=0x9fff => { 0x0 },
-            0xa000..=0xbfff => { 0x0 },
-            0xc000..=0xcfff => { 0x0 },
-            0xd000..=0xdfff => { 0x0 },
-            0xfe00..=0xfe9f => { 0x0 },
-            0xff00..=0xff7f => { 0x0 },
-            0xff80..=0xfffe => { 0x0 },
-            0xffff..=0xffff => { 0x0 },
-            _ => { 0xff }
-        };
-        address
-    }
-    pub fn fetch(&mut self) {
+    pub fn fetch(&mut self,  mmu: &mut MMU) {
         println!("==========================");
-        self.instr = self.read_memory(self.pc);
-        let arg1 = self.read_memory(self.pc + 1);
-        let arg2 = self.read_memory(self.pc + 2);
+        self.instr = mmu.read_memory(self.pc);
+        let arg1 = mmu.read_memory(self.pc + 1);
+        let arg2 = mmu.read_memory(self.pc + 2);
         self.byte2 = arg1;
         self.byte3 = arg2;
         self.dump();
@@ -268,7 +185,7 @@ impl Chip {
     ///
     /// * `register_code` - The code of the register to access
     ///
-    fn get_r8_register(&mut self, register_code: REGISTER8) -> u8 {
+    fn get_r8_register(&mut self, register_code: REGISTER8, mmu: &mut MMU) -> u8 {
         match register_code {
             REGISTER8::B => { self.b },
             REGISTER8::C => { self.c },
@@ -276,7 +193,7 @@ impl Chip {
             REGISTER8::E => { self.e },
             REGISTER8::H => { self.h },
             REGISTER8::L => { self.l },
-            REGISTER8::HL=> { let memory_address = self.get_r16_register(REGISTER16::HL); self.read_memory(memory_address) }, //[HL]
+            REGISTER8::HL=> { let memory_address = self.get_r16_register(REGISTER16::HL); mmu.read_memory(memory_address) }, //[HL]
             REGISTER8::A => { self.a },
             _ => { panic!("Cannot get register code: Unknown register code {:?}", register_code) }
 
@@ -290,7 +207,7 @@ impl Chip {
     /// * `register_code` - The register to change
     /// * `value` - New value of register
     ///
-    fn set_r8_register(&mut self, register_code: REGISTER8, value: u8) {
+    fn set_r8_register(&mut self, register_code: REGISTER8, value: u8, mmu: &mut MMU) {
         match register_code {
             REGISTER8::B => { self.b = value },
             REGISTER8::C => { self.c = value },
@@ -298,7 +215,7 @@ impl Chip {
             REGISTER8::E => { self.e = value },
             REGISTER8::H => { self.h = value },
             REGISTER8::L => { self.l = value },
-            REGISTER8::HL => { let memory_address = self.get_r16_register(REGISTER16::HL); self.write_memory(memory_address, value) }, //[HL]
+            REGISTER8::HL => { let memory_address = self.get_r16_register(REGISTER16::HL); mmu.write_memory(memory_address, value) }, //[HL]
             REGISTER8::A => { self.a = value },
             _ => { panic!("Cannot get register code: Unknown register code {:?}", register_code) }
 
@@ -416,7 +333,7 @@ impl Chip {
         return (half_carry, carry);
     }
 
-    pub fn execute_cb(&mut self) {
+    pub fn execute_cb(&mut self, mmu: &mut MMU) {
         println!("CB-Prefix: 0x{:02X}",  self.instr);
         let oct1 = (self.instr & 0b11000000) >> 6;
         let oct2 = (self.instr & 0b00111000) >> 3;
@@ -424,21 +341,21 @@ impl Chip {
         println!("Octets: 0b{:03b} 0b{:03b} 0b{:03b}", oct1, oct2, oct3);
 
         match (oct1, oct2, oct3) {
-            (0b00, opcode, r8) => { self.shift_rotate(opcode, r8)  },
-            (0b01, bit, r8) => { self.bit(bit, r8) },
-            (0b10, bit, r8) => { self.res(bit, r8) },
-            (0b11, bit, r8) => { self.set(bit, r8) },
+            (0b00, opcode, r8) => { self.shift_rotate(opcode, r8, mmu)  },
+            (0b01, bit, r8) => { self.bit(bit, r8, mmu) },
+            (0b10, bit, r8) => { self.res(bit, r8, mmu) },
+            (0b11, bit, r8) => { self.set(bit, r8, mmu) },
             _ => { println!("CB-Prefix Error: 0x{:02X} not implemented!", self.instr); std::process::exit(1); },
         }
     }
 
-    pub fn execute(&mut self) {
+    pub fn execute(&mut self, mmu: &mut MMU) {
         // println!("{:b}",  self.instr);
         // Handle CB-prefixed instructions
         if self.instr == 0xcb {
             // Move ahead from 0xcb
             self.pc += 1;
-            self.execute_cb();
+            self.execute_cb(mmu);
             return;
         }
         let oct1 = (self.instr & 0b11000000) >> 6;
@@ -448,47 +365,47 @@ impl Chip {
 
         match (oct1, oct2, oct3) {
             (0b00, 0b000, 0b000) => { println!("NOOP"); self.noop() }, //noop
-            (0b00, 0b001, 0b000) => { println!("ld_u16_sp"); self.ld_u16_sp() }, //LD (u16), SP
+            (0b00, 0b001, 0b000) => { println!("ld_u16_sp"); self.ld_u16_sp(mmu) }, //LD (u16), SP
             (0b00, 0b010, 0b000) => { println!("STOP"); panic!("STOPPING!") }, //STOP
             (0b00, 0b011, 0b000) => { println!("jr"); self.jr() }, //JR
             (0b00, 0b100..=0b111, 0b000) => { println!("jr_cond"); self.jr_cond(oct2) }, //JR conditonal
             (0b00,0b000|0b010|0b100|0b110, 0b001) => { println!("ld_r16_u16"); self.ld_r16_u16(oct2 >> 1) }, //LD r16, u16
             (0b00,0b001|0b011|0b101|0b111, 0b001) => { println!("add_hl_r16"); self.add_hl_r16(oct2 >> 1) }, //ADD HL, r16
-            (0b00,0b000|0b010|0b100|0b110, 0b010) => { println!("ld_r16_addr_a"); self.ld_r16_addr_a(oct2 >> 1) }, //LD (r16), A
-            (0b00,0b001|0b011|0b101|0b111, 0b010) => { println!("ld_a_r16_addr"); self.ld_a_r16_addr(oct2 >> 1) }, //LD A, (r16)
-            (0b00,0b000|0b010|0b100|0b110, 0b011) => { println!("inc_r16"); self.inc_r16(oct2 >> 1) }, //INC r16
-            (0b00,0b001|0b011|0b101|0b111, 0b011) => { println!("dec_r16"); self.dec_r16(oct2 >> 1) }, //DEC r16
-            (0b00, r8, 0b100) => { println!("inc_r8"); self.inc_r8(r8) }, //INC r8
-            (0b00, r8, 0b101) => { println!("dec_r8"); self.dec_r8(r8) }, //DEC r8
-            (0b00, r8, 0b110) => { println!("ld_r8_n8"); self.ld_r8_n8(r8) }, //LD r8, u8
-            (0b00, opcode, 0b111) => { println!("special_opcodes"); self.special_opcodes(opcode) }, //Opcode grp 1
+            (0b00,0b000|0b010|0b100|0b110, 0b010) => { println!("ld_r16_addr_a"); self.ld_r16_addr_a(oct2 >> 1, mmu) }, //LD (r16), A
+            (0b00,0b001|0b011|0b101|0b111, 0b010) => { println!("ld_a_r16_addr"); self.ld_a_r16_addr(oct2 >> 1, mmu) }, //LD A, (r16)
+            (0b00,0b000|0b010|0b100|0b110, 0b011) => { println!("inc_r16"); self.inc_r16(oct2 >> 1, mmu) }, //INC r16
+            (0b00,0b001|0b011|0b101|0b111, 0b011) => { println!("dec_r16"); self.dec_r16(oct2 >> 1, mmu) }, //DEC r16
+            (0b00, r8, 0b100) => { println!("inc_r8"); self.inc_r8(r8, mmu) }, //INC r8
+            (0b00, r8, 0b101) => { println!("dec_r8"); self.dec_r8(r8, mmu) }, //DEC r8
+            (0b00, r8, 0b110) => { println!("ld_r8_n8"); self.ld_r8_n8(r8, mmu) }, //LD r8, u8
+            (0b00, opcode, 0b111) => { println!("special_opcodes"); self.special_opcodes(opcode, mmu) }, //Opcode grp 1
             (0b01, 0b110, 0b110) => { println!("halt"); self.halt() }, //HALT
-            (0b01, dst_r8, src_r8) => { println!("ld_r8_r8"); self.ld_r8_r8(src_r8, dst_r8) }, //LD r8, r8
-            (0b10, op, r8) => { println!("alu_a_r8"); self.alu_a_r8(op, r8);  }, //ALU A, r8
-            (0b11, 0b000..=0b011, 0b000) => { println!("ret_cond"); self.ret_cond(oct2) }, //RET condition
-            (0b11, 0b100, 0b000) => { println!("ldh_i16_a"); self.ldh_i16_a() }, //LD (FF00 + u8), A
+            (0b01, dst_r8, src_r8) => { println!("ld_r8_r8"); self.ld_r8_r8(src_r8, dst_r8, mmu) }, //LD r8, r8
+            (0b10, op, r8) => { println!("alu_a_r8"); self.alu_a_r8(op, r8, mmu);  }, //ALU A, r8
+            (0b11, 0b000..=0b011, 0b000) => { println!("ret_cond"); self.ret_cond(oct2, mmu) }, //RET condition
+            (0b11, 0b100, 0b000) => { println!("ldh_i16_a"); self.ldh_i16_a(mmu) }, //LD (FF00 + u8), A
             (0b11, 0b101, 0b000) => { println!("add_sp_i8"); self.add_sp_i8() }, //ADD SP, i8
-            (0b11, 0b110, 0b000) => { println!("ldh_a_i16"); self.ldh_a_i16() }, //LD A, (FF00 + u8)
+            (0b11, 0b110, 0b000) => { println!("ldh_a_i16"); self.ldh_a_i16(mmu) }, //LD A, (FF00 + u8)
             (0b11, 0b111, 0b000) => { println!("ld_hl_sp_imm8"); self.ld_hl_sp_imm8() }, //LD HL, SP + i8
-            (0b11, 0b000|0b010|0b100|0b110, 0b001) => { println!("pop_r16"); self.pop_r16(oct2 >> 1) }, //POP r16
-            (0b11, 0b001, 0b001) => { println!("ret"); self.ret() }, // RET
-            (0b11, 0b011, 0b001) => { println!("reti"); self.reti() }, // RETI
+            (0b11, 0b000|0b010|0b100|0b110, 0b001) => { println!("pop_r16"); self.pop_r16(oct2 >> 1, mmu) }, //POP r16
+            (0b11, 0b001, 0b001) => { println!("ret"); self.ret(mmu) }, // RET
+            (0b11, 0b011, 0b001) => { println!("reti"); self.reti(mmu) }, // RETI
             (0b11, 0b101, 0b001) => { println!("jp_hl"); self.jp_hl() }, // JP HL
             (0b11, 0b111, 0b001) => { println!("ld_sp_hl"); self.ld_sp_hl() }, // LD SP, HL
             (0b11, 0b000..=0b011, 0b010) => { println!("jp_cond"); self.jp_cond(oct2) }, //JP
-            (0b11, 0b100, 0b010) => { println!("ldh_c_a"); self.ldh_c_a() }, //LD (FF00 + C), A
-            (0b11, 0b101, 0b010) => { println!("ld_n16_a"); self.ld_n16_a() }, //LD (u16), A
-            (0b11, 0b110, 0b010) => { println!("ldh_a_c"); self.ldh_a_c() }, //LD A, (FF00 + C)
-            (0b11, 0b111, 0b010) => { println!("ld_a_n16"); self.ld_a_n16() }, //LD A, (u16)
+            (0b11, 0b100, 0b010) => { println!("ldh_c_a"); self.ldh_c_a(mmu) }, //LD (FF00 + C), A
+            (0b11, 0b101, 0b010) => { println!("ld_n16_a"); self.ld_n16_a(mmu) }, //LD (u16), A
+            (0b11, 0b110, 0b010) => { println!("ldh_a_c"); self.ldh_a_c(mmu) }, //LD A, (FF00 + C)
+            (0b11, 0b111, 0b010) => { println!("ld_a_n16"); self.ld_a_n16(mmu) }, //LD A, (u16)
             (0b11, 0b000, 0b011) => { println!("jp_u16"); self.jp_u16() }, //JP u16
             (0b11, 0b001, 0b011) => {  }, //CB prefix
             (0b11, 0b110, 0b011) => { println!("di"); self.di() }, //DI
             (0b11, 0b111, 0b011) => { println!("ei"); self.ei() }, //EI
-            (0b11, 0b000..=0b011, 0b100) => { println!("call_cond"); self.call_cond(oct2) }, //CALL condition
-            (0b11, 0b000|0b010|0b100|0b110, 0b101) => { println!("push_r16"); self.push_r16(oct2 >> 1) }, //PUSH r16
-            (0b11, 0b001, 0b101) => { println!("call"); self.call() }, //CALL u16
+            (0b11, 0b000..=0b011, 0b100) => { println!("call_cond"); self.call_cond(oct2, mmu) }, //CALL condition
+            (0b11, 0b000|0b010|0b100|0b110, 0b101) => { println!("push_r16"); self.push_r16(oct2 >> 1, mmu) }, //PUSH r16
+            (0b11, 0b001, 0b101) => { println!("call"); self.call(mmu) }, //CALL u16
             (0b11, opcode, 0b110) => { println!("alu_a_u8"); self.alu_a_u8(opcode) }, //ALU a, u8
-            (0b11, tgt, 0b111) => { println!("rst"); self.rst(tgt) }, //RST
+            (0b11, tgt, 0b111) => { println!("rst"); self.rst(tgt, mmu) }, //RST
             _ => { println!("Error: 0x{:02X} not implemented!", self.instr); std::process::exit(1); },
         }
     }
@@ -503,22 +420,22 @@ impl Chip {
     }
 
     // Set nth bit to zero in r8
-    fn res(&mut self, bit: u8, r8: u8) {
-        let mut reg = self.get_r8_register(r8.into());
+    fn res(&mut self, bit: u8, r8: u8, mmu: &mut MMU) {
+        let mut reg = self.get_r8_register(r8.into(), mmu);
         reg = !(1 << bit) & reg;
-        self.set_r8_register(r8.into(), reg);
+        self.set_r8_register(r8.into(), reg, mmu);
     }
 
     // Set nth bit in r8
-    fn set(&mut self, bit: u8, r8: u8) {
-        let mut reg = self.get_r8_register(r8.into());
+    fn set(&mut self, bit: u8, r8: u8, mmu: &mut MMU) {
+        let mut reg = self.get_r8_register(r8.into(), mmu);
         reg = (1 << bit) | reg;
-        self.set_r8_register(r8.into(), reg);
+        self.set_r8_register(r8.into(), reg, mmu);
     }
 
     // Test for nth bit value in r8
-    fn bit(&mut self, bit: u8, r8: u8) {
-        let reg = self.get_r8_register(r8.into());
+    fn bit(&mut self, bit: u8, r8: u8, mmu: &mut MMU) {
+        let reg = self.get_r8_register(r8.into(), mmu);
         // Check nth bit of reg, and if it is zero, set zero flag
         if ((1 << bit) & reg) >> bit == 0 {
             self.flags.zero = 1;
@@ -527,24 +444,24 @@ impl Chip {
         self.flags.h = 1;
     }
 
-    fn shift_rotate(&mut self, opcode: u8, r8: u8) {
+    fn shift_rotate(&mut self, opcode: u8, r8: u8, mmu: &mut MMU) {
         match opcode {
-            0b000 => { self.rlc_r8(r8) },
-            0b001 => { self.rrc_r8(r8) },
-            0b010 => { self.rl_r8(r8) },
-            0b011 => { self.rr_r8(r8) },
-            0b100 => { self.sla_r8(r8) },
-            0b101 => { self.sra_r8(r8) },
-            0b110 => { self.swap_r8(r8) },
-            0b111 => { self.srl_r8(r8) },
+            0b000 => { self.rlc_r8(r8, mmu) },
+            0b001 => { self.rrc_r8(r8, mmu) },
+            0b010 => { self.rl_r8(r8, mmu) },
+            0b011 => { self.rr_r8(r8, mmu) },
+            0b100 => { self.sla_r8(r8, mmu) },
+            0b101 => { self.sra_r8(r8, mmu) },
+            0b110 => { self.swap_r8(r8, mmu) },
+            0b111 => { self.srl_r8(r8, mmu) },
             _ => { panic!("Invalid opcode for shift_rotate: {}", opcode) }
         }
     }
 
 
     // Swap upper 4 bits of r8 with lower 4 bits
-    fn swap_r8(&mut self, r8: u8) {
-        let mut reg = self.get_r8_register(r8.into());
+    fn swap_r8(&mut self, r8: u8, mmu: &mut MMU) {
+        let mut reg = self.get_r8_register(r8.into(), mmu);
         let high = (reg >> 4) as u8;
         let low = (reg & 0x0f) as u8;
         reg = (low << 4) | high;
@@ -554,12 +471,12 @@ impl Chip {
         self.flags.n = 0;
         self.flags.h = 0;
         self.flags.carry = 0;
-        self.set_r8_register(r8.into(), reg);
+        self.set_r8_register(r8.into(), reg, mmu);
     }
 
     // Shift r8 right logically
-    fn srl_r8(&mut self, r8: u8) {
-        let mut reg = self.get_r8_register(r8.into());
+    fn srl_r8(&mut self, r8: u8, mmu: &mut MMU) {
+        let mut reg = self.get_r8_register(r8.into(), mmu);
         self.flags.carry = reg & 0b1;
         reg  = reg >> 1;
         if reg == 0 {
@@ -567,12 +484,12 @@ impl Chip {
         }
         self.flags.n = 0;
         self.flags.h = 0;
-        self.set_r8_register(r8.into(), reg);
+        self.set_r8_register(r8.into(), reg, mmu);
     }
 
     // Shift r8 right 
-    fn sra_r8(&mut self, r8: u8) {
-        let mut reg = self.get_r8_register(r8.into());
+    fn sra_r8(&mut self, r8: u8, mmu: &mut MMU) {
+        let mut reg = self.get_r8_register(r8.into(), mmu);
         self.flags.carry = reg & 0b1;
         // Think of this as signed division by 2
         let bit = reg >> 7;
@@ -582,12 +499,12 @@ impl Chip {
         }
         self.flags.n = 0;
         self.flags.h = 0;
-        self.set_r8_register(r8.into(), reg);
+        self.set_r8_register(r8.into(), reg, mmu);
     }
 
     // Rotate register r8 right through carry flag (wrapping)
-    fn rr_r8(&mut self, r8: u8) {
-        let mut reg = self.get_r8_register(r8.into());
+    fn rr_r8(&mut self, r8: u8, mmu: &mut MMU) {
+        let mut reg = self.get_r8_register(r8.into(), mmu);
         let carry = self.flags.carry;
         self.flags.carry = reg & 0b1;
         reg  = (reg >> 1) | (carry << 7);
@@ -596,12 +513,12 @@ impl Chip {
         }
         self.flags.n = 0;
         self.flags.h = 0;
-        self.set_r8_register(r8.into(), reg);
+        self.set_r8_register(r8.into(), reg, mmu);
     }
 
     // Rotate register r8 right
-    fn rrc_r8(&mut self, r8: u8) {
-        let mut reg = self.get_r8_register(r8.into());
+    fn rrc_r8(&mut self, r8: u8, mmu: &mut MMU) {
+        let mut reg = self.get_r8_register(r8.into(), mmu);
         self.flags.carry = reg & 0b1;
         // Move bit 0 to bit 7, since bit carry is bit 0
         reg  = (reg >> 1) | (self.flags.carry << 7);
@@ -610,12 +527,12 @@ impl Chip {
         }
         self.flags.n = 0;
         self.flags.h = 0;
-        self.set_r8_register(r8.into(), reg);
+        self.set_r8_register(r8.into(), reg, mmu);
     }
 
     // Shift r8 left
-    fn sla_r8(&mut self, r8: u8) {
-        let mut reg = self.get_r8_register(r8.into());
+    fn sla_r8(&mut self, r8: u8, mmu: &mut MMU) {
+        let mut reg = self.get_r8_register(r8.into(), mmu);
         self.flags.carry = reg >> 7;
         reg = reg << 1;
         if reg == 0 {
@@ -623,12 +540,12 @@ impl Chip {
         }
         self.flags.n = 0;
         self.flags.h = 0;
-        self.set_r8_register(r8.into(), reg);
+        self.set_r8_register(r8.into(), reg, mmu);
     }
 
     // Rotate register r8 left through carry flag (wrapping)
-    fn rl_r8(&mut self, r8: u8) {
-        let mut reg = self.get_r8_register(r8.into());
+    fn rl_r8(&mut self, r8: u8, mmu: &mut MMU) {
+        let mut reg = self.get_r8_register(r8.into(), mmu);
         let carry = self.flags.carry;
         self.flags.carry = reg >> 7;
         reg = (reg << 1) | carry;
@@ -637,12 +554,12 @@ impl Chip {
         }
         self.flags.n = 0;
         self.flags.h = 0;
-        self.set_r8_register(r8.into(), reg);
+        self.set_r8_register(r8.into(), reg, mmu);
     }
 
     // Rotate register r8 left
-    fn rlc_r8(&mut self, r8: u8) {
-        let mut reg = self.get_r8_register(r8.into());
+    fn rlc_r8(&mut self, r8: u8, mmu: &mut MMU) {
+        let mut reg = self.get_r8_register(r8.into(), mmu);
         self.flags.carry = reg >> 7;
         // Move bit 7 to bit 0, since carry is now bit7
         reg = (reg << 1) | self.flags.carry;
@@ -651,19 +568,19 @@ impl Chip {
         }
         self.flags.n = 0;
         self.flags.h = 0;
-        self.set_r8_register(r8.into(), reg);
+        self.set_r8_register(r8.into(), reg, mmu);
     }
 
-    fn rst(&mut self, tgt: u8) {
+    fn rst(&mut self, tgt: u8, mmu: &mut MMU) {
         // Target address 0x00exp000
         let address = (tgt << 3) as u16;
         self.pc += 1;
         let high = (self.pc >> 8) as u8;
         let low = (self.pc & 0xff) as u8;
         self.sp -= 1;
-        self.write_memory(self.sp, high);
+        mmu.write_memory(self.sp, high);
         self.sp -= 1;
-        self.write_memory(self.sp, low);
+        mmu.write_memory(self.sp, low);
         // JP u16
         self.pc = address;
     }
@@ -687,23 +604,23 @@ impl Chip {
     }
 
     // CALL if cond met
-    fn call_cond(&mut self, cond: u8) {
+    fn call_cond(&mut self, cond: u8, mmu: &mut MMU) {
         if self.flags.get_cond(cond) != 0 {
-            self.call()
+            self.call(mmu)
         }
     }
 
     // Save next address onto stack so that RET can pop it later
-    fn call(&mut self) {
+    fn call(&mut self, mmu: &mut MMU) {
         let address = (self.byte3 as u16) << 8 | self.byte2 as u16; 
         self.pc += 3;
         // PC has already moved onto the next address
         let high = (self.pc >> 8) as u8;
         let low = (self.pc & 0xff) as u8;
         self.sp -= 1;
-        self.write_memory(self.sp, high);
+        mmu.write_memory(self.sp, high);
         self.sp -= 1;
-        self.write_memory(self.sp, low);
+        mmu.write_memory(self.sp, low);
         // JP u16
         self.pc = address;
     }
@@ -744,80 +661,80 @@ impl Chip {
     }
 
     // Enable interrupts and RETURN
-    fn reti(&mut self) {
+    fn reti(&mut self, mmu: &mut MMU) {
         // Enable interrupt
         self.ei();
-        self.ret();
+        self.ret(mmu);
     }
 
     // RETURN
-    fn ret(&mut self) {
-        let low = self.read_memory(self.sp);
+    fn ret(&mut self, mmu: &mut MMU) {
+        let low = mmu.read_memory(self.sp);
         self.sp += 1;
-        let high = self.read_memory(self.sp);
+        let high = mmu.read_memory(self.sp);
         self.sp += 1;
         let value = (((high as u16) << 8) as u16) | (low as u16);
         self.pc = value;
     }
     // RETURN based on condition
-    fn ret_cond(&mut self, ret_code: u8) {
+    fn ret_cond(&mut self, ret_code: u8, mmu: &mut MMU) {
         // If condition true, RET
         if self.flags.get_cond(ret_code) != 0 {
-            self.ret();
+            self.ret(mmu);
         }
         self.next(1);
     }
 
     // Push to stack
-    fn push_r16(&mut self, r16: u8) {
+    fn push_r16(&mut self, r16: u8, mmu: &mut MMU) {
         let value = self.get_r16stk_register(r16.into());
         let high = (value >> 8) as u8;
         let low = (value & 0xff) as u8;
         self.sp -= 1;
-        self.write_memory(self.sp, high);
+        mmu.write_memory(self.sp, high);
         self.sp -= 1;
-        self.write_memory(self.sp, low);
+        mmu.write_memory(self.sp, low);
         self.next(1);
     }
 
     // Load value in reg A from [n16]
-    fn ld_a_n16(&mut self) {
+    fn ld_a_n16(&mut self, mmu: &mut MMU) {
         let address = (self.byte3 as u16) << 8 | self.byte2 as u16; 
-        let value = self.read_memory(address);
-        self.set_r8_register(REGISTER8::A, value);
+        let value = mmu.read_memory(address);
+        self.set_r8_register(REGISTER8::A, value, mmu);
         self.pc += 2;
         self.next(1);
     }
     
     // Load [0xff00 + c] into reg A
-    fn ldh_a_c(&mut self) {
-        let address = 0xff00 + self.get_r8_register(REGISTER8::C) as u16;
-        let value = self.read_memory(address);
-        self.set_r8_register(REGISTER8::A, value);
+    fn ldh_a_c(&mut self, mmu: &mut MMU) {
+        let address = 0xff00 + self.get_r8_register(REGISTER8::C, mmu) as u16;
+        let value = mmu.read_memory(address);
+        self.set_r8_register(REGISTER8::A, value, mmu);
         self.next(1);
     }
 
     // Load reg A value into memory address byte3 << 8|byte2
-    fn ld_n16_a(&mut self) {
-        let value = self.get_r8_register(REGISTER8::A);
+    fn ld_n16_a(&mut self, mmu: &mut MMU) {
+        let value = self.get_r8_register(REGISTER8::A, mmu);
         let address = (self.byte3 as u16) << 8 | self.byte2 as u16; 
-        self.write_memory(address, value);
+        mmu.write_memory(address, value);
         self.pc += 2;
         self.next(1);
     }
     // Load value in register A into $ff00 + C
-    fn ldh_c_a(&mut self) {
-        let value = self.get_r8_register(REGISTER8::A);
-        let address = self.get_r8_register(REGISTER8::C);
-        self.write_memory(0xff00 + address as u16, value);
+    fn ldh_c_a(&mut self, mmu: &mut MMU) {
+        let value = self.get_r8_register(REGISTER8::A, mmu);
+        let address = self.get_r8_register(REGISTER8::C, mmu);
+        mmu.write_memory(0xff00 + address as u16, value);
         self.next(1);
     }
 
     // POP address from stack and save to register
-    fn pop_r16(&mut self, r16: u8) {
-        let low = self.read_memory(self.sp);
+    fn pop_r16(&mut self, r16: u8, mmu: &mut MMU) {
+        let low = mmu.read_memory(self.sp);
         self.sp += 1;
-        let high = self.read_memory(self.sp);
+        let high = mmu.read_memory(self.sp);
         self.sp += 1;
         let value = (((high as u16) << 8) as u16) | (low as u16);
         self.set_r16stk_register(r16.into(), value);
@@ -840,11 +757,11 @@ impl Chip {
 
     }
     // Load value in address ff00 + n8 if in range, then save value in register A
-    fn ldh_a_i16(&mut self) {
+    fn ldh_a_i16(&mut self, mmu: &mut MMU) {
         let address = self.byte2 as u16 + 0xFF00;
         if address < 0xffff && address > 0xff00 {
-            let value = self.read_memory(address);
-            self.set_r8_register(REGISTER8::A, value);
+            let value = mmu.read_memory(address);
+            self.set_r8_register(REGISTER8::A, value, mmu);
         }
         self.pc += 1;
         self.next(1);
@@ -868,20 +785,20 @@ impl Chip {
 
     // Load value from dst_r8 into src_r8. When called as LD r1 r2, this method
     // is called as ld_r8_r8(r2, r1) (Notice the inversion)
-    fn ld_r8_r8(&mut self, src_r8: u8, dst_r8: u8) {
-        let value = self.get_r8_register(src_r8.into());
-        self.set_r8_register(dst_r8.into(), value);
+    fn ld_r8_r8(&mut self, src_r8: u8, dst_r8: u8, mmu: &mut MMU) {
+        let value = self.get_r8_register(src_r8.into(), mmu);
+        self.set_r8_register(dst_r8.into(), value, mmu);
         self.next(1);
 
     }
 
     // If n8 + ff00 is in range, store value of register A into memory location n8 + ff00
     // LDH [n16], A OR LDH [$FF00 + n8], A
-    fn ldh_i16_a(&mut self) {
+    fn ldh_i16_a(&mut self, mmu: &mut MMU) {
         let address: u16 = 0xFF00 + self.byte2 as u16;
         if address < 0xffff && address > 0xff00 {
-            let value = self.get_r8_register(REGISTER8::A);
-            self.write_memory(address, value);
+            let value = self.get_r8_register(REGISTER8::A, mmu);
+            mmu.write_memory(address, value);
         }
         self.pc += 1;
         self.next(1);
@@ -894,14 +811,14 @@ impl Chip {
     }
 
     //TODO
-    fn special_opcodes(&mut self, opcode: u8) {
+    fn special_opcodes(&mut self, opcode: u8, mmu: &mut MMU) {
         match opcode {
-            0 => { self.rlca() },
-            1 => { self.rrca() },
-            2 => { self.rla() },
-            3 => { self.rra() },
+            0 => { self.rlca(mmu) },
+            1 => { self.rrca(mmu) },
+            2 => { self.rla(mmu) },
+            3 => { self.rra(mmu) },
             4 => { self.daa() },
-            5 => { self.cpl() },
+            5 => { self.cpl(mmu) },
             6 => { self.scf() },
             7 => { self.ccf() },
             _ => { panic!("Invalid opcode for special group: {:02X}", opcode);
@@ -910,34 +827,34 @@ impl Chip {
         self.next(1);
     }
 
-    fn rlca(&mut self) {
+    fn rlca(&mut self, mmu: &mut MMU) {
         let reg_code_a = 7;
-        self.rlc_r8(reg_code_a.into());
+        self.rlc_r8(reg_code_a.into(), mmu);
     }
 
-    fn rrca(&mut self) {
+    fn rrca(&mut self, mmu: &mut MMU) {
         let reg_code_a = 7;
-        self.rrc_r8(reg_code_a.into());
+        self.rrc_r8(reg_code_a.into(), mmu);
     }
 
-    fn rla(&mut self) {
+    fn rla(&mut self, mmu: &mut MMU) {
         let reg_code_a = 7;
-        self.rl_r8(reg_code_a.into());
+        self.rl_r8(reg_code_a.into(), mmu);
     }
 
-    fn rra(&mut self) {
+    fn rra(&mut self, mmu: &mut MMU) {
         let reg_code_a = 7;
-        self.rr_r8(reg_code_a.into());
+        self.rr_r8(reg_code_a.into(), mmu);
     }
 
     fn daa(&mut self) {
         panic!("TODO")
     }
-    fn cpl(&mut self) {
+    fn cpl(&mut self, mmu: &mut MMU) {
         let reg_code_a = 7;
-        let mut reg = self.get_r8_register(reg_code_a.into());
+        let mut reg = self.get_r8_register(reg_code_a.into(), mmu);
         reg = !reg;
-        self.set_r8_register(reg_code_a.into(), reg);
+        self.set_r8_register(reg_code_a.into(), reg, mmu);
     }
     fn scf(&mut self) {
         panic!("TODO")
@@ -950,31 +867,31 @@ impl Chip {
 
 
     //Increment value in register r8 by 1
-    fn inc_r8(&mut self, register_lookup: u8) {
-        let register = self.get_r8_register(register_lookup.into());
+    fn inc_r8(&mut self, register_lookup: u8, mmu: &mut MMU) {
+        let register = self.get_r8_register(register_lookup.into(), mmu);
         let sum = register.wrapping_add(1);
         if sum == 0 { self.flags.zero = 0 }
         self.flags.n = 0;
         let (half_carry, _) = self.check_carry_add_u8(register, 1);
         if half_carry { self.flags.h = 1 }
-        self.set_r8_register(register_lookup.into(), sum);
+        self.set_r8_register(register_lookup.into(), sum, mmu);
         self.next(1);
     }
 
     //Decrement value in register r8 by 1
-    fn dec_r8(&mut self, register_lookup: u8) {
-        let register = self.get_r8_register(register_lookup.into());
+    fn dec_r8(&mut self, register_lookup: u8, mmu: &mut MMU) {
+        let register = self.get_r8_register(register_lookup.into(), mmu);
         let sum = register.wrapping_sub(1);
         if sum == 0 { self.flags.zero = 0 }
         self.flags.n = 1;
         let (half_carry, _) = self.check_carry_sub_u8(register, 1);
         if half_carry{ self.flags.h = 1 }
-        self.set_r8_register(register_lookup.into(), sum);
+        self.set_r8_register(register_lookup.into(), sum, mmu);
         self.next(1);
     }
 
     //Increment value in register r16 by 1
-    fn inc_r16(&mut self, register_lookup: u8) {
+    fn inc_r16(&mut self, register_lookup: u8, mmu: &mut MMU) {
         let mut register = self.get_r16_register(register_lookup.into());
         register = register.wrapping_add(1);
         self.set_r16_register(register_lookup.into(), register);
@@ -982,7 +899,7 @@ impl Chip {
     }
 
     //Decrement value in register r16 by 1
-    fn dec_r16(&mut self, register_lookup: u8) {
+    fn dec_r16(&mut self, register_lookup: u8, mmu: &mut MMU) {
         let mut register = self.get_r16_register(register_lookup.into());
         register = register.wrapping_sub(1);
         self.set_r16_register(register_lookup.into(), register);
@@ -990,23 +907,23 @@ impl Chip {
     }
 
     //Load value  n8 into register r8
-    fn ld_r8_n8(&mut self, r8: u8) {
-        self.set_r8_register(r8.into(), self.byte2);
+    fn ld_r8_n8(&mut self, r8: u8, mmu: &mut MMU) {
+        self.set_r8_register(r8.into(), self.byte2, mmu);
         self.pc += 1;
         self.next(1);
     }
 
     //Load value pointed in memory by r16 register pair into register A
-    fn ld_a_r16_addr(&mut self, register_lookup: u8) {
+    fn ld_a_r16_addr(&mut self, register_lookup: u8, mmu: &mut MMU) {
         let memory_address = self.get_r16mem_register(register_lookup.into());
-        self.a = self.read_memory(memory_address);
+        self.a = mmu.read_memory(memory_address);
         self.next(1);
     }
     // Load the 8 bit value in register A to the memory address pointed by the register from the
     // table
-    fn ld_r16_addr_a(&mut self, register_lookup: u8) {
+    fn ld_r16_addr_a(&mut self, register_lookup: u8, mmu: &mut MMU) {
         let memory_address = self.get_r16mem_register(register_lookup.into());
-        self.write_memory(memory_address, self.a);
+        mmu.write_memory(memory_address, self.a);
         self.next(1);
     }
 
@@ -1063,17 +980,17 @@ impl Chip {
     }
 
     //Store SP lower at address u16, and SP upper at address u16 + 1
-    fn ld_u16_sp(&mut self) {
+    fn ld_u16_sp(&mut self, mmu: &mut MMU) {
         let address: u16 = (self.byte3 as u16) << 8 | self.byte2 as u16;
-        self.write_memory(address, (self.sp & 0xff) as u8);
-        self.write_memory(address + 1, (self.sp >> 8) as u8);
+        mmu.write_memory(address, (self.sp & 0xff) as u8);
+        mmu.write_memory(address + 1, (self.sp >> 8) as u8);
         self.pc += 2;
         self.next(1);
     }
 
     //All math based operations are processed here
-    fn alu_a_r8(&mut self, opcode: u8, r8: u8) {
-        let value = self.get_r8_register(r8.into());
+    fn alu_a_r8(&mut self, opcode: u8, r8: u8, mmu: &mut MMU) {
+        let value = self.get_r8_register(r8.into(), mmu);
         match opcode {
             0b000 => { println!("add_a_r8"); self.add_a_u8(value) },
             0b001 => { println!("adc_a_r8"); self.adc_a_u8(value) },

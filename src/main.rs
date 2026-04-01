@@ -1,5 +1,5 @@
 use clap::Parser;
-mod cpu;
+mod emulator;
 
 use sdl2::pixels::Color;
 use sdl2::event::Event;
@@ -27,8 +27,8 @@ fn main() {
     canvas.present();
     let mut event_pump = sdl_context.event_pump().unwrap();
     let args = Args::parse();
-    let mut cpu = cpu::chip::Chip::new();
-    cpu.load_rom(&args.name);
+    let mut emulator = emulator::emulator::Emulator::new();
+    emulator.mmu.load_rom(&args.name);
     loop {
         for event in event_pump.poll_iter() {
             match event {
@@ -39,8 +39,8 @@ fn main() {
                 _ => {}
             }
         }
-        cpu.fetch();
-        cpu.execute();
+        emulator.cpu.fetch(&mut emulator.mmu);
+        emulator.cpu.execute(&mut emulator.mmu);
         canvas.present();
     }
 }
