@@ -1,3 +1,22 @@
+struct Pixel {
+    color: u8,
+}
+struct Tile {
+    pixels: [Pixel; 8*8],
+}
+impl Tile {
+    fn from_raw(data: [u8; 16]) -> Self {
+        for i in 0..15 {
+            let byte1 = data[i];
+            let byte2 = data[i + 1];
+            for j in 0..8 {
+                let pixel = 
+            }
+        }
+
+        Self { }
+    }
+}
 pub struct PPU {
 }
 
