@@ -11,7 +11,6 @@ pub struct MMU {
     pub wram_bank_n: [u8; 4096],
     pub vram: [u8; 8192],
     pub object_attribute_memory: [u8; 160],
-    pub io_registers: [u8; 128],
 }
 
 impl MMU {
@@ -24,7 +23,6 @@ impl MMU {
             wram_bank_n: [0; 4096],
             vram: [0; 8192],
             object_attribute_memory: [0; 160],
-            io_registers: [0; 128],
             rom: Vec::new(),
         }
     }
